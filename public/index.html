@@ -1,0 +1,775 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>猎看文档系统</title>
+    <link rel="stylesheet" href="/assets/styles/tokens.css?v=20261009" />
+    <link rel="stylesheet" href="/assets/styles/components.css?v=20261009" />
+    <link rel="stylesheet" href="/assets/styles/admin.css?v=20261009-settings-tabs1" />
+  </head>
+  <body class="lkdoc admin-page" data-auth="loading">
+    <div class="boot-screen" id="bootScreen" role="status">正在加载工作台…</div>
+    <aside class="shell-sidebar" id="appSidebar" aria-label="文档导航">
+      <a
+        class="brand"
+        href="/admin"
+        id="adminHomeLink"
+        aria-label="返回后台首页"
+        ><span class="brand-mark" data-icon="document"></span
+        ><span class="brand-copy"
+          ><span class="brand-title" id="adminBrandTitle">猎看文档系统</span
+          ><span class="brand-caption">DOCUMENT WORKSPACE</span></span
+        ></a
+      ><button
+        class="btn icon-btn drawer-close"
+        id="drawerClose"
+        type="button"
+        aria-label="关闭导航"
+      >
+        <span data-icon="close"></span>
+      </button>
+      <nav class="sidebar-nav">
+        <div class="nav-label">文档管理</div>
+        <a class="nav-item" href="/admin" data-nav-type="upload"><span data-icon="upload"></span><span>上传文档</span></a>
+        <a class="nav-item" href="/admin?view=documents" data-nav-type="all"
+          ><span data-icon="grid"></span><span>全部文档</span
+          ><span class="nav-count" data-count="all">0</span></a
+        >
+        <a class="nav-item" href="/admin?type=html" data-nav-type="html"
+          ><span data-icon="document"></span><span>HTML文档</span
+          ><span class="nav-count" data-count="html">0</span></a
+        >
+        <a class="nav-item" href="/admin?type=pdf" data-nav-type="pdf"
+          ><span data-icon="document"></span><span>PDF文档</span
+          ><span class="nav-count" data-count="pdf">0</span></a
+        >
+        <a class="nav-item" href="/admin?type=word" data-nav-type="word"
+          ><span data-icon="document"></span><span>Word文档</span
+          ><span class="nav-count" data-count="word">0</span></a
+        >
+        <a class="nav-item" href="/admin?type=other" data-nav-type="other"><span data-icon="document"></span><span>其它文档</span><span class="nav-count" data-count="other">0</span></a>
+        <a class="nav-item" href="/admin?scope=trash" data-nav-type="trash"
+          ><span data-icon="trash"></span><span>回收站</span
+          ><span class="nav-count" data-count="trash">0</span></a
+        >
+      </nav>
+      <footer class="sidebar-footer">
+        <a class="nav-item" href="/admin/settings" id="openSettings"
+          ><span data-icon="settings"></span>系统设置</a
+        ><a
+          class="nav-item"
+          href="/"
+          id="openPublicHome"
+          target="_blank"
+          rel="noopener noreferrer"
+          ><span data-icon="external"></span>公开文档首页</a
+        >
+        <div class="sidebar-account">
+          <span class="avatar">LK</span><span id="authUserLabel">管理员</span
+          ><button class="text-btn" id="logoutButton" type="button">
+            退出登录
+          </button>
+        </div>
+      </footer>
+      <div
+        class="sidebar-resizer"
+        id="sidebarResizer"
+        role="separator"
+        aria-label="调整侧栏宽度"
+        aria-orientation="vertical"
+        aria-valuemin="180"
+        aria-valuemax="320"
+        tabindex="0"
+      ></div>
+    </aside>
+    <button
+      class="sidebar-backdrop"
+      id="sidebarBackdrop"
+      aria-label="关闭导航"
+      hidden
+    ></button>
+    <div class="shell-workspace">
+      <header class="topbar">
+        <div class="topbar-title">
+          <button
+            class="btn icon-btn ghost"
+            id="sidebarToggle"
+            type="button"
+            aria-label="收起侧栏"
+            aria-controls="appSidebar"
+            aria-expanded="true"
+          >
+            <span data-icon="menu"></span>
+          </button>
+          <h1 id="workspaceTitle">上传文档</h1>
+        </div>
+        <div class="topbar-actions" id="managerActions">
+          <button class="btn" id="pickDirectory" type="button">
+            <span data-icon="folder"></span
+            ><span class="desktop-label">导入目录</span></button
+          ><button class="btn primary" id="pickFiles" type="button">
+            <span data-icon="upload"></span>上传文件</button
+          ><button
+            class="btn icon-btn"
+            id="uploadMore"
+            type="button"
+            aria-label="更多上传操作"
+            aria-haspopup="menu"
+          >
+            <span data-icon="more"></span>
+          </button>
+        </div>
+        <div class="topbar-actions" id="settingsActions" hidden>
+          <span id="settingsSaveState" class="saved-indicator">已保存</span
+          ><button
+            class="btn primary"
+            id="saveSettingsTop"
+            type="submit"
+            form="settingsForm"
+          >
+            保存设置
+          </button>
+        </div>
+      </header>
+      <main class="content-scroll" id="mainContent">
+        <div class="notice" id="globalError" role="alert" hidden></div>
+        <div class="stats-grid" aria-label="文档统计">
+            <article class="stat-card">
+              <span>文档总量</span><strong id="metricTotal">0</strong
+              ><small>当前有效文档</small>
+            </article>
+            <article class="stat-card">
+              <span>可在线编辑</span><strong id="metricEditable">0</strong
+              ><small>HTML文档</small>
+            </article>
+            <article class="stat-card">
+              <span>今日入库</span><strong id="metricToday">0</strong
+              ><small>有效文档 · 本地日期</small>
+            </article>
+            <article class="stat-card">
+              <span>监听目录</span><strong id="metricWatch">0</strong
+              ><small>事件监听 + 手动重扫</small>
+            </article>
+          </div>
+        <section id="uploadView" hidden aria-labelledby="uploadEntryTitle">
+          <section
+            class="panel upload-entry"
+            id="uploadEntry"
+            aria-labelledby="uploadEntryTitle"
+          >
+            <div class="upload-entry-icon" aria-hidden="true">
+              <span data-icon="upload"></span>
+            </div>
+            <div class="upload-entry-copy">
+              <h2 id="uploadEntryTitle">上传文档，生成本地链接</h2>
+              <p>选择文件或导入整个目录，集中管理与阅读你的文档。</p>
+              <p class="upload-entry-detail">
+                支持 HTML、PDF、Word。HTML 可在线编辑；目录导入会同步图片、CSS、JS 等附件。
+              </p>
+            </div>
+            <div class="upload-entry-actions">
+              <button class="btn primary" id="uploadFilesButton" type="button">
+                <span data-icon="upload"></span>上传文件
+              </button>
+              <button class="btn" id="uploadDirectoryButton" type="button">
+                <span data-icon="folder"></span>导入目录
+              </button>
+              <button class="btn upload-sample" id="uploadSamplesButton" type="button">
+                <span data-icon="document"></span>添加示例
+              </button>
+              <span class="upload-entry-note">也可拖放文件至此 · 单文件最大 20 MiB</span>
+            </div>
+          </section>
+          <ol class="upload-steps" aria-label="上传流程"><li><span>1</span><div><strong>选择文档</strong><p>上传文件、导入目录或直接拖放。</p></div></li><li><span>2</span><div><strong>核对信息与权限</strong><p>调整名称、首页可见性与访问密码。</p></div></li><li><span>3</span><div><strong>确认入库</strong><p>生成阅读链接，随时管理与更新。</p></div></li></ol>
+          <a class="text-btn upload-list-link" href="/admin?view=documents" id="uploadListLink">查看全部文档<span data-icon="grid"></span></a>
+        </section>
+        <section id="managerView" hidden>
+          <section class="panel" id="dropZone" aria-labelledby="listTitle">
+            <div class="panel-heading">
+              <h2 id="listTitle">全部文档</h2>
+              <span class="hint" id="listCount">0 个文档</span>
+            </div>
+            <div class="toolbar">
+              <label class="search-wrap"
+                ><span data-icon="search"></span
+                ><input
+                  id="searchInput"
+                  type="search"
+                  placeholder="搜索文档标题、文件名…"
+                  aria-label="搜索文档" /></label
+              ><select id="statusSelect" aria-label="文档状态">
+                <option value="all">全部状态</option>
+                <option value="published">已生成</option>
+                <option value="edited">已编辑</option></select
+              ><select id="directorySelect" aria-label="文档目录">
+                <option value="all">全部目录</option></select
+              ><select id="visibilitySelect" aria-label="文档访问方式">
+                <option value="all">全部访问方式</option>
+                <option value="listed">公开 · 首页可见</option>
+                <option value="unlisted">公开 · 仅链接可见</option>
+                <option value="public" hidden>全部公开</option>
+                <option value="private">私有 · 管理员可见</option></select
+              ><select id="passwordFilter" aria-label="密码保护筛选"><option value="all">全部密码状态</option><option value="yes">有密码</option><option value="no">无密码</option></select
+              ><select id="sortSelect" aria-label="文档排序">
+                <option value="updated_desc">最近更新</option>
+                <option value="created_desc">最近入库</option>
+                <option value="access_desc">访问次数</option></select
+              ><button class="btn ghost" id="clearFilters" type="button">
+                清除筛选</button
+              ><button
+                class="btn icon-btn"
+                id="refreshList"
+                type="button"
+                aria-label="刷新列表"
+                title="刷新列表"
+              >
+                <span data-icon="refresh"></span>
+              </button>
+            </div>
+            <div
+              id="listLoading"
+              class="loading-line"
+              role="status"
+              aria-label="加载中"
+              hidden
+            ></div>
+            <div class="empty-state" id="emptyState" hidden></div>
+            <div class="table-scroll" id="managerTable">
+              <table class="doc-table">
+                <thead>
+                  <tr>
+                    <th scope="col">文档名称</th>
+                    <th scope="col" id="timeHeading">更新时间</th>
+                    <th scope="col">目录</th>
+                    <th scope="col">访问</th>
+                    <th scope="col">访问权限</th>
+                    <th scope="col">状态</th>
+                    <th scope="col">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="pageRows"></tbody>
+              </table>
+            </div>
+            <nav
+              class="pagination"
+              id="paginationBar"
+              aria-label="管理列表分页"
+            ></nav>
+          </section>
+        </section>
+        <section class="settings-page" id="settingsPage" hidden>
+          <div class="settings-navigation">
+            <a class="btn small" id="settingsBackLink" href="/admin?view=documents"
+              ><span data-icon="back"></span>返回文档</a
+            >
+            <div class="settings-tabs" role="tablist" aria-label="设置分组">
+              <button type="button" role="tab" id="siteSettingsTab" aria-controls="siteSettings" aria-selected="true" tabindex="0">站点信息与 SEO</button>
+              <button type="button" role="tab" id="directorySettingsTab" aria-controls="directorySettings" aria-selected="false" tabindex="-1">目录监听</button>
+              <button type="button" role="tab" id="editSettingsTab" aria-controls="editSettings" aria-selected="false" tabindex="-1">编辑与版本</button>
+              <button type="button" role="tab" id="trackingSettingsTab" aria-controls="trackingSettings" aria-selected="false" tabindex="-1">统计代码</button>
+              <button type="button" role="tab" id="remoteSettingsTab" aria-controls="remoteSettings" aria-selected="false" tabindex="-1">线上绑定</button>
+              <button type="button" role="tab" id="securitySettingsTab" aria-controls="securitySettings" aria-selected="false" tabindex="-1">账号与安全</button>
+            </div>
+          </div>
+          <form class="settings-sections" id="settingsForm" novalidate>
+              <section
+                class="panel settings-section"
+                id="siteSettings"
+                role="tabpanel"
+                aria-labelledby="siteSettingsTab"
+                tabindex="-1"
+              >
+                <h2 id="siteSettingsTitle">站点信息与 SEO</h2>
+                <span class="hint">设置公开门户和管理工作台的名称。</span>
+                <div class="form-grid">
+                  <label class="field" for="siteNameInput"
+                    ><span>前台网站名称</span
+                    ><input
+                      id="siteNameInput"
+                      type="text"
+                      required
+                      maxlength="100" /><small
+                      class="field-error"
+                      data-error-for="siteNameInput"
+                      hidden
+                    ></small></label
+                  ><label class="field" for="adminNameInput"
+                    ><span>后台名称</span
+                    ><input
+                      id="adminNameInput"
+                      type="text"
+                      required
+                      maxlength="100" /><small
+                      class="field-error"
+                      data-error-for="adminNameInput"
+                      hidden
+                    ></small></label
+                  ><label class="checkbox-field full"
+                    ><input
+                      id="publicHomepageEnabledInput"
+                      type="checkbox"
+                    /><span
+                      >启用公开首页<small class="hint" style="display: block"
+                        >关闭后，文档短链接仍按原有权限访问。</small
+                      ></span
+                    ></label
+                  ><label class="field full" for="publicSeoTitleInput"
+                    ><span>前台 SEO 标题</span
+                    ><input id="publicSeoTitleInput" type="text" /><small
+                      class="field-error"
+                      data-error-for="publicSeoTitleInput"
+                      hidden
+                    ></small></label
+                  ><label class="field full" for="publicSeoDescriptionInput"
+                    ><span>SEO 描述</span
+                    ><textarea id="publicSeoDescriptionInput"></textarea
+                    ><small
+                      class="field-error"
+                      data-error-for="publicSeoDescriptionInput"
+                      hidden
+                    ></small></label
+                  ><label class="field full" for="publicSeoKeywordsInput"
+                    ><span>SEO 关键词</span
+                    ><input id="publicSeoKeywordsInput" type="text" /><small
+                      class="field-error"
+                      data-error-for="publicSeoKeywordsInput"
+                      hidden
+                    ></small
+                  ></label>
+                </div>
+              </section>
+              <section
+                class="panel settings-section"
+                id="directorySettings"
+                role="tabpanel"
+                aria-labelledby="directorySettingsTab"
+                tabindex="-1"
+                hidden
+              >
+                <h2 id="directorySettingsTitle">上传与目录监听</h2>
+                <span class="hint"
+                  >监听目录中的 HTML 变化，支持手动重新扫描。</span
+                ><label class="field" for="watchDirInput"
+                  ><span>添加监听目录</span></label
+                >
+                <div class="inline-form">
+                  <input
+                    id="watchDirInput"
+                    placeholder="服务器上的绝对目录路径"
+                    aria-label="监听目录路径"
+                  /><button
+                    class="btn primary"
+                    id="addWatchDirectory"
+                    type="button"
+                  >
+                    添加目录</button
+                  ><button class="btn" id="openSettingsSide" type="button">
+                    目录策略设置
+                  </button>
+                </div>
+                <p class="hint">
+                  手动添加的目录默认只生成文档，源文件回写状态显示在各目录下。
+                </p>
+                <div class="watch-list" id="watchList"></div>
+                <dl class="readonly-list">
+                  <div>
+                    <dt>生成文件目录</dt>
+                    <dd id="outputDirValue">加载中</dd>
+                  </div>
+                  <div>
+                    <dt>扫描机制</dt>
+                    <dd>文件事件监听 + 手动重扫</dd>
+                  </div>
+                  <div>
+                    <dt>配置目录初始化回写默认值</dt>
+                    <dd id="sourceWriteDefault">加载中</dd>
+                  </div>
+                </dl>
+              </section>
+              <section
+                class="panel settings-section"
+                id="editSettings"
+                role="tabpanel"
+                aria-labelledby="editSettingsTab"
+                tabindex="-1"
+                hidden
+              >
+                <h2 id="editSettingsTitle">编辑与版本策略</h2>
+                <span class="hint">以下策略由当前运行逻辑决定。</span>
+                <dl class="readonly-list">
+                  <div>
+                    <dt>在线编辑自动保存</dt>
+                    <dd id="autosavePolicy">加载中</dd>
+                  </div>
+                  <div>
+                    <dt>版本快照</dt>
+                    <dd id="snapshotPolicy">加载中</dd>
+                  </div>
+                  <div>
+                    <dt>文件生成</dt>
+                    <dd>保存生成副本，上传原文件保留</dd>
+                  </div>
+                  <div>
+                    <dt>版本冲突</dt>
+                    <dd>保留当前输入，提示核对后重新打开</dd>
+                  </div>
+                </dl>
+              </section>
+              <section
+                class="panel settings-section"
+                id="trackingSettings"
+                role="tabpanel"
+                aria-labelledby="trackingSettingsTab"
+                tabindex="-1"
+                hidden
+              >
+                <h2 id="trackingSettingsTitle">统计代码</h2>
+                <span class="hint"
+                  >新上传或新扫描生成的 HTML
+                  注入统计代码，系统会自动避免重复注入。</span
+                ><label class="field" for="trackingCodeInput"
+                  ><span>HTML 统计脚本</span
+                  ><textarea
+                    id="trackingCodeInput"
+                    spellcheck="false"
+                  ></textarea
+                  ><small class="hint"
+                    >仅在需要统计的站点使用，留空可停用后续生成文档的注入。</small
+                  ><small
+                    class="field-error"
+                    data-error-for="trackingCodeInput"
+                    hidden
+                  ></small
+                ></label>
+              </section>
+              <section
+                class="panel settings-section"
+                id="remoteSettings"
+                role="tabpanel"
+                aria-labelledby="remoteSettingsTab"
+                tabindex="-1"
+                hidden
+              >
+                <h2 id="remoteSettingsTitle">线上绑定</h2>
+                <span class="hint"
+                  >绑定现有线上接收接口，HTML 文档可从列表上传线上。</span
+                ><label class="checkbox-field"
+                  ><input id="remoteSyncEnabledInput" type="checkbox" /><span
+                    >启用线上同步</span
+                  ></label
+                >
+                <div class="form-grid" style="margin-top: 20px">
+                  <label class="field full" for="remoteSyncUrlInput"
+                    ><span>线上接口地址</span
+                    ><input
+                      id="remoteSyncUrlInput"
+                      type="url"
+                      placeholder="https://example.com/api/documents" /><small
+                      class="field-error"
+                      data-error-for="remoteSyncUrlInput"
+                      hidden
+                    ></small></label
+                  ><label class="field full" for="remoteSyncTokenInput"
+                    ><span>访问 Token</span
+                    ><input
+                      id="remoteSyncTokenInput"
+                      type="password"
+                      autocomplete="off" /><small class="hint"
+                      >留空保持已保存的 Token。</small
+                    ><small
+                      class="field-error"
+                      data-error-for="remoteSyncTokenInput"
+                      hidden
+                    ></small
+                  ></label>
+                  <p id="remoteTokenState" class="hint full"></p>
+                </div>
+              </section>
+              <section
+                class="panel settings-section"
+                id="securitySettings"
+                role="tabpanel"
+                aria-labelledby="securitySettingsTab"
+                tabindex="-1"
+                hidden
+              >
+                <h2 id="securitySettingsTitle">账号与安全</h2>
+                <span class="hint">管理路径更新成功后将自动切换至新地址。</span>
+                <div class="form-grid">
+                  <label class="field" for="adminPathInput"
+                    ><span>后台访问目录</span
+                    ><input id="adminPathInput" type="text" required /><small
+                      class="hint"
+                      >单层路径，长度 2 至 64 个字符。</small
+                    ><small
+                      class="field-error"
+                      data-error-for="adminPathInput"
+                      hidden
+                    ></small></label
+                  ><label class="field" for="currentPasswordInput"
+                    ><span>当前密码</span
+                    ><input
+                      id="currentPasswordInput"
+                      type="password"
+                      autocomplete="current-password" /><small class="hint"
+                      >修改后台目录时填写。</small
+                    ><small
+                      class="field-error"
+                      data-error-for="currentPasswordInput"
+                      hidden
+                    ></small></label
+                  ><label class="field" for="authUsernameInput"
+                    ><span>登录用户名</span
+                    ><input
+                      id="authUsernameInput"
+                      type="text"
+                      required
+                      autocomplete="username" /><small
+                      class="field-error"
+                      data-error-for="authUsernameInput"
+                      hidden
+                    ></small></label
+                  ><label class="field" for="authPasswordInput"
+                    ><span>新登录密码</span
+                    ><input
+                      id="authPasswordInput"
+                      type="password"
+                      autocomplete="new-password" /><small class="hint"
+                      >留空保持原密码。</small
+                    ><small
+                      class="field-error"
+                      data-error-for="authPasswordInput"
+                      hidden
+                    ></small
+                  ></label>
+                </div>
+              </section>
+              <div class="settings-actions">
+                <span id="settingsBottomState" class="hint">已保存</span
+                ><button class="btn primary" id="saveSettings" type="submit">
+                  保存设置
+                </button>
+              </div>
+          </form>
+        </section>
+        <section class="reader" id="previewView" aria-label="文档阅读" hidden>
+          <div class="reader-toolbar">
+            <button class="btn small" id="closePreview" type="button">
+              <span data-icon="back"></span>返回
+            </button>
+            <h2 class="reader-title" id="previewTitle"></h2>
+            <div class="reader-actions">
+              <button
+                class="btn primary small"
+                id="editFromPreview"
+                type="button"
+              >
+                <span data-icon="edit"></span>在线编辑</button
+              ><button
+                class="btn small reader-secondary"
+                id="copyFromPreview"
+                type="button"
+              >
+                <span data-icon="copy"></span>复制链接</button
+              ><a
+                class="btn small reader-secondary"
+                id="openFromPreview"
+                target="_blank"
+                rel="noopener noreferrer"
+                ><span data-icon="external"></span>打开</a
+              ><button
+                class="btn small"
+                id="toggleInfo"
+                type="button"
+                aria-controls="previewInfo"
+                aria-expanded="false"
+              >
+                <span data-icon="info"></span>信息</button
+              ><button
+                class="btn icon-btn small"
+                id="previewMore"
+                type="button"
+                aria-label="更多阅读操作"
+                aria-haspopup="menu"
+              >
+                <span data-icon="more"></span>
+              </button>
+            </div>
+          </div>
+          <div class="reader-body">
+            <div class="panel reader-canvas">
+              <div class="reader-load" id="previewLoad" role="status">
+                正在加载文档…
+              </div>
+              <iframe id="previewFrame" title="文档阅读内容"></iframe>
+              <div class="reader-fallback">
+                <span id="readerTypeNote"></span
+                ><a id="readerOpen" target="_blank" rel="noopener noreferrer"
+                  >新窗口阅读</a
+                ><a id="readerDownload" download>下载阅读文件</a>
+              </div>
+            </div>
+            <aside class="panel reader-info" id="previewInfo" hidden>
+              <div class="info-tabs">
+                <button class="btn small" id="infoTab" type="button">
+                  文档信息</button
+                ><button class="btn small" id="versionsTab" type="button">
+                  版本记录
+                </button>
+              </div>
+              <dl class="meta-list" id="previewMeta"></dl>
+              <div id="previewVersions" hidden></div>
+            </aside>
+          </div>
+        </section>
+      </main>
+    </div>
+    <section class="login-screen" id="loginBackdrop" hidden>
+      <div class="panel login-card">
+        <a class="brand" href="#"
+          ><span class="brand-mark" data-icon="document"></span
+          ><span class="brand-copy"
+            ><span class="brand-title">猎看文档系统</span
+            ><span class="brand-caption">DOCUMENT WORKSPACE</span></span
+          ></a
+        >
+        <h1 id="loginTitle">猎看文档系统 登录</h1>
+        <p class="hint">登录后管理、阅读和更新你的文档。</p>
+        <form id="loginForm">
+          <label class="field" for="loginUsername"
+            ><span>用户名</span
+            ><input
+              id="loginUsername"
+              name="username"
+              autocomplete="username"
+              required /></label
+          ><label class="field" for="loginPassword"
+            ><span>密码</span
+            ><input
+              id="loginPassword"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              required
+          /></label>
+          <p id="loginError" class="field-error" role="alert" hidden></p>
+          <button class="btn primary" id="loginSubmit" type="submit">
+            登录工作台
+          </button>
+        </form>
+        <div class="login-footer">猎看文档系统 · DOCUMENT WORKSPACE</div>
+      </div>
+    </section>
+    <input
+      id="fileInput"
+      type="file"
+      accept=".html,.htm,.pdf,.doc,.docx,text/html,application/pdf"
+      multiple
+      hidden
+    /><input
+      id="directoryInput"
+      type="file"
+      webkitdirectory
+      directory
+      multiple
+      hidden
+    />
+    <dialog class="dialog" id="uploadBackdrop" aria-labelledby="uploadTitle">
+      <div class="dialog-header">
+        <div>
+          <h2 id="uploadTitle">上传文档</h2>
+          <p class="hint">上传完成后核对名称与访问设置，再确认入库。</p>
+        </div>
+        <button
+          class="btn icon-btn"
+          id="closeUpload"
+          type="button"
+          aria-label="取消上传"
+        >
+          <span data-icon="close"></span>
+        </button>
+      </div>
+      <div class="dialog-body">
+        <div class="upload-progress-head">
+          <strong id="uploadProgressText">正在准备上传</strong
+          ><span class="pill" id="uploadProgressBadge">准备</span>
+        </div>
+        <p class="hint" id="uploadProgressDetail"></p>
+        <div
+          class="upload-progress"
+          role="progressbar"
+          id="uploadProgress"
+          aria-label="上传进度"
+          aria-valuemin="0"
+          aria-valuemax="100"
+        >
+          <div class="upload-progress-bar" id="uploadProgressBar"></div>
+        </div>
+        <div id="uploadReview" hidden>
+          <div class="upload-review-head">
+            <h3>核对文档</h3>
+            <span class="hint" id="uploadReviewCount"></span>
+          </div>
+          <p class="hint" id="uploadReviewSummary"></p>
+          <div id="uploadReviewRows"></div>
+        </div>
+      </div>
+      <div class="dialog-footer">
+        <span class="hint" id="uploadFooterNote">确认前保存在暂存区。</span
+        ><button class="btn" id="cancelUpload" type="button">取消</button
+        ><button class="btn primary" id="confirmUpload" type="button" disabled>
+          确认入库
+        </button>
+      </div>
+    </dialog>
+    <dialog class="dialog access-settings-dialog" id="accessDialog" aria-labelledby="accessTitle">
+      <div class="dialog-header"><div><h2 id="accessTitle">文档访问设置</h2><p class="hint" id="accessDocumentName"></p></div><button class="btn icon-btn" id="closeAccess" type="button" aria-label="关闭访问设置"><span data-icon="close"></span></button></div>
+      <form id="accessForm">
+        <div class="dialog-body">
+          <label class="field"><span>访问方式</span><select id="accessMode"><option value="listed">公开 · 首页可见</option><option value="unlisted">公开 · 仅链接可见</option><option value="private">私有 · 管理员可见</option></select></label>
+          <p class="hint" id="accessModeHint"></p>
+          <label class="field"><span>访问密码</span><select id="accessPasswordAction"><option value="keep">保持当前设置</option><option value="set">设置 / 更换密码</option><option value="remove">移除密码</option></select></label>
+          <div id="accessPasswordField" hidden><label class="field" for="accessPassword"><span>新访问密码</span></label><div class="password-control"><input id="accessPassword" type="password" autocomplete="new-password" placeholder="设置访问密码，至少 6 个字符"><button class="btn" id="showAccessPassword" type="button">显示</button></div><p class="hint">6–128 个字符，区分大小写，首尾空格会保留。</p></div>
+          <div class="access-memory"><div><strong>已记住的访问权限</strong><p class="hint">清除后，所有访客浏览器都需重新验证。文档密码会保留。</p></div><button class="btn" id="revokeAccess" type="button">清除访问权限</button></div>
+          <p class="field-error" id="accessError" role="alert" hidden></p>
+        </div>
+        <div class="dialog-footer"><span class="hint">访问密码与管理员登录密码独立。</span><button class="btn" id="cancelAccess" type="button">取消</button><button class="btn primary" id="saveAccess" type="submit">保存设置</button></div>
+      </form>
+    </dialog>
+    <dialog
+      class="dialog history-dialog"
+      id="historyDialog"
+      aria-labelledby="historyTitle"
+    >
+      <div class="dialog-header">
+        <h2 id="historyTitle">版本记录</h2>
+        <button
+          class="btn icon-btn"
+          id="closeHistory"
+          type="button"
+          aria-label="关闭版本记录"
+        >
+          <span data-icon="close"></span>
+        </button>
+      </div>
+      <div class="dialog-body" id="historyList"></div>
+    </dialog>
+    <dialog
+      class="dialog confirm-dialog"
+      id="confirmDialog"
+      aria-labelledby="confirmTitle"
+    >
+      <div class="dialog-header"><h2 id="confirmTitle">确认操作</h2></div>
+      <div class="dialog-body"><p></p></div>
+      <div class="dialog-footer">
+        <button class="btn" type="button" data-confirm-cancel>取消</button
+        ><button class="btn primary" type="button" data-confirm-submit>
+          确认
+        </button>
+      </div>
+    </dialog>
+    <div class="toast" id="toast" role="status" hidden></div>
+    <script type="module" src="/assets/app.js?v=20261009-settings-tabs1"></script>
+  </body>
+</html>

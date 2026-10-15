@@ -1,0 +1,24 @@
+{
+  "name": "liekan-docs",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "type": "module",
+  "description": "猎看文档系统：支持 HTML、PDF 和 Word 的本地文档管理系统，提供预览、页面内编辑和自动保存，支持 Node.js 与 Docker 部署。",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@fastify/multipart": "^9.3.0",
+    "@fastify/static": "^10.1.6",
+    "chokidar": "^4.0.3",
+    "fastify": "^5.12.7",
+    "linkedom": "^0.18.12"
+  },
+  "displayName": "猎看文档系统",
+  "license": "MIT"
+}

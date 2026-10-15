@@ -1,0 +1,27 @@
+name: liekan-docs
+
+services:
+  liekan-docs:
+    build:
+      context: .
+      args:
+        NODE_IMAGE: ${TOKDOC_NODE_IMAGE:-node:22-bookworm-slim}
+    image: ${TOKDOC_IMAGE:-liekan-docs:latest}
+    container_name: ${TOKDOC_CONTAINER_NAME:-liekan-docs}
+    ports:
+      - "${TOKDOC_BIND_ADDR:-127.0.0.1}:${TOKDOC_HOST_PORT:-18082}:8080"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      TOKDOC_DATA_DIR: /app/data
+      TOKDOC_WATCH_DIRS: ${TOKDOC_CONTAINER_WATCH_DIRS:-/watch/html-inbox}
+      TOKDOC_ALLOW_SOURCE_WRITE: ${TOKDOC_ALLOW_SOURCE_WRITE:-false}
+      TOKDOC_SOFFICE_BIN: soffice
+      TOKDOC_TRUST_PROXY: ${TOKDOC_TRUST_PROXY:-}
+      TOKDOC_ADMIN_PATH: ${TOKDOC_ADMIN_PATH:-}
+      TOKDOC_INITIAL_USERNAME: ${TOKDOC_INITIAL_USERNAME:-admin}
+      TOKDOC_INITIAL_PASSWORD: ${TOKDOC_INITIAL_PASSWORD:-tokdoc}
+    volumes:
+      - ${TOKDOC_DATA_VOLUME:-./data}:/app/data
+      - ${TOKDOC_WATCH_VOLUME:-./html-inbox}:/watch/html-inbox
+    restart: unless-stopped

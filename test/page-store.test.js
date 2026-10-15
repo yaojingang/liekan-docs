@@ -1,0 +1,684 @@
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { createDb } from "../src/db.js";
+import { PageStore } from "../src/page-store.js";
+
+async function createStore(overrides = {}) {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "tokdoc-test-"));
+  const watchDir = path.join(dataDir, "watch");
+  const config = {
+    name: "liekan-docs",
+    rootDir: dataDir,
+    host: "127.0.0.1",
+    port: 0,
+    dataDir,
+    uploadsDir: path.join(dataDir, "uploads"),
+    generatedDir: path.join(dataDir, "pages"),
+    versionsDir: path.join(dataDir, "versions"),
+    publicDir: path.join(dataDir, "public"),
+    watchDirs: [watchDir],
+    allowSourceWrite: false,
+    ...overrides,
+  };
+  const db = createDb(config);
+  const store = new PageStore(config, db);
+  await store.ensureStorage();
+  return { store, db, config, dataDir, watchDir };
+}
+
+test("directory facets remain selectable when a watched directory name contains spaces", async (t) => {
+  const { store, db, dataDir } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+  const watched = path.join(dataDir, " reports 中文 ");
+  await fs.mkdir(watched);
+  const file = path.join(watched, "note.html");
+  await fs.writeFile(file, "<title>Directory spacing</title>");
+  await store.addWatchDir({ path: watched });
+  await store.upsertWatchedFile(file);
+  const directory = store.managementSummary().facets.directories[0];
+  assert.equal(directory.name, " reports 中文 ");
+  assert.equal(store.listPages({ directory: directory.name }).length, 1);
+});
+
+test("imports uploaded HTML and extracts directory name from relative path", async (t) => {
+  const { store, db, dataDir, config } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+
+  const page = await store.importBuffer({
+    fileName: "a.html",
+    relativePath: "watch-demo-a/a.html",
+    buffer: Buffer.from(
+      "<!doctype html><title>目录导入 A</title><h1>备用标题</h1>",
+    ),
+  });
+
+  assert.equal(page.title, "目录导入 A");
+  assert.equal(page.directoryName, "watch-demo-a");
+  assert.equal(page.fileName, "a.html");
+  assert.equal(page.revision, 1);
+  assert.match(page.url, /^\/[a-z0-9]{6}$/);
+  assert.equal(page.editUrl, `${page.url}?edit=1`);
+  assert.equal(path.dirname(page.generatedPath), config.generatedDir);
+  assert.match(
+    path.basename(page.generatedPath),
+    new RegExp(`^\\d{8}-a-${page.slug}\\.html$`),
+  );
+  assert.match(await store.readPageHtml(page), /目录导入 A/);
+});
+
+test("imports uploaded PDF as a public readable document asset", async (t) => {
+  const { store, db, dataDir, config } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+
+  const pdfBytes = Buffer.from("%PDF-1.4\n% tokdoc pdf probe\n");
+  const page = await store.importBuffer({
+    fileName: "report.pdf",
+    relativePath: "docs/report.pdf",
+    buffer: pdfBytes,
+  });
+
+  assert.equal(page.fileType, "pdf");
+  assert.equal(page.mimeType, "application/pdf");
+  assert.equal(page.title, "report");
+  assert.equal(page.directoryName, "docs");
+  assert.equal(page.fileName, "report.pdf");
+  assert.equal(page.editUrl, "");
+  assert.match(page.url, /^\/[a-z0-9]{6}$/);
+  assert.equal(path.dirname(page.generatedPath), config.generatedDir);
+  assert.match(
+    path.basename(page.generatedPath),
+    new RegExp(`^\\d{8}-report-${page.slug}\\.pdf$`),
+  );
+  assert.deepEqual(await store.readPageFile(page), pdfBytes);
+});
+
+test("reads generated assets after Docker absolute paths move to the local data directory", async (t) => {
+  const { store, db, dataDir } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+
+  const pdfBytes = Buffer.from("%PDF-1.4\nportable path report\n");
+  const page = await store.importBuffer({
+    fileName: "portable-report.pdf",
+    relativePath: "docs/portable-report.pdf",
+    buffer: pdfBytes,
+  });
+  const dockerPath = `/app/data/pages/${path.basename(page.generatedPath)}`;
+  db.prepare("UPDATE pages SET generated_path = ? WHERE id = ?").run(
+    dockerPath,
+    page.id,
+  );
+
+  const stalePage = store.getPage(page.id);
+  assert.equal(stalePage.generatedPath, dockerPath);
+  assert.deepEqual(await store.readPageFile(stalePage), pdfBytes);
+});
+
+test("imports uploaded Word documents by converting them to readable PDF assets", async (t) => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "tokdoc-office-"));
+  const fakeOffice = path.join(dataDir, "fake-soffice.mjs");
+  await fs.writeFile(
+    fakeOffice,
+    [
+      "#!/usr/bin/env node",
+      'import fs from "node:fs";',
+      'import path from "node:path";',
+      'const outdir = process.argv[process.argv.indexOf("--outdir") + 1];',
+      "const source = process.argv.at(-1);",
+      'const output = path.join(outdir, path.basename(source).replace(/\\.[^.]+$/, ".pdf"));',
+      "fs.writeFileSync(output, `%PDF-1.4\\nconverted:${path.basename(source)}\\n`);",
+    ].join("\n"),
+  );
+  await fs.chmod(fakeOffice, 0o755);
+
+  const { store, db, config } = await createStore({
+    officeConverterBin: fakeOffice,
+  });
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+  t.after(() => fs.rm(config.dataDir, { recursive: true, force: true }));
+
+  const page = await store.importBuffer({
+    fileName: "contract.docx",
+    relativePath: "clients/contract.docx",
+    buffer: Buffer.from("docx-bytes"),
+  });
+  const generated = await store.readPageFile(page);
+
+  assert.equal(page.fileType, "word");
+  assert.equal(page.mimeType, "application/pdf");
+  assert.equal(page.title, "contract");
+  assert.equal(page.directoryName, "clients");
+  assert.equal(page.fileName, "contract.docx");
+  assert.equal(path.dirname(page.generatedPath), config.generatedDir);
+  assert.match(
+    path.basename(page.generatedPath),
+    new RegExp(`^\\d{8}-contract-${page.slug}\\.pdf$`),
+  );
+  assert.match(
+    generated.toString("utf8"),
+    /^%PDF-1\.4\nconverted:contract\.docx/,
+  );
+});
+
+test("imports upload folders with sibling assets and injects a page asset base", async (t) => {
+  const { store, db, dataDir } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+
+  const pages = await store.importUploadFiles([
+    {
+      fileName: "index.html",
+      relativePath: "campaign/index.html",
+      buffer: Buffer.from(
+        '<!doctype html><html><head><title>活动页</title><link rel="stylesheet" href="css/style.css"></head><body><img src="images/logo.png"><h1>活动页</h1></body></html>',
+      ),
+    },
+    {
+      fileName: "style.css",
+      relativePath: "campaign/css/style.css",
+      buffer: Buffer.from("body{color:#123}"),
+    },
+    {
+      fileName: "logo.png",
+      relativePath: "campaign/images/logo.png",
+      buffer: Buffer.from("png-bytes"),
+    },
+  ]);
+
+  assert.equal(pages.length, 1);
+  assert.equal(pages[0].directoryName, "campaign");
+  assert.equal(pages[0].fileName, "index.html");
+  assert.match(
+    path.basename(pages[0].generatedPath),
+    new RegExp(`^\\d{8}-index-${pages[0].slug}\\.html$`),
+  );
+  assert.match(
+    await store.readPageHtml(pages[0]),
+    /<base data-tokdoc-base href="\/page-assets\/[^/]+\/campaign\/">/,
+  );
+  await fs.access(
+    path.join(path.dirname(pages[0].sourcePath), "css", "style.css"),
+  );
+  await fs.access(
+    path.join(path.dirname(pages[0].sourcePath), "images", "logo.png"),
+  );
+});
+
+test("stages uploads without inserting pages until confirmed and allows metadata edits", async (t) => {
+  const { store, db, dataDir, config } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+
+  const staged = await store.stageUploadFiles([
+    {
+      fileName: "index.html",
+      relativePath: "launch/index.html",
+      buffer: Buffer.from(
+        '<!doctype html><html><head><title>原始标题</title></head><body><h1>原始标题</h1><img src="assets/logo.png"></body></html>',
+      ),
+    },
+    {
+      fileName: "logo.png",
+      relativePath: "launch/assets/logo.png",
+      buffer: Buffer.from("logo-bytes"),
+    },
+  ]);
+
+  assert.equal(store.listPages().length, 0);
+  assert.equal(staged.documents.length, 1);
+  assert.equal(staged.assetCount, 1);
+  assert.equal(staged.documents[0].title, "原始标题");
+  assert.equal(staged.documents[0].visibility, "public");
+  await fs.access(
+    path.join(
+      config.dataDir,
+      "pending-uploads",
+      staged.uploadId,
+      "launch",
+      "index.html",
+    ),
+  );
+  await assert.rejects(() =>
+    fs.access(
+      path.join(
+        config.uploadsDir,
+        ".pending",
+        staged.uploadId,
+        "launch",
+        "index.html",
+      ),
+    ),
+  );
+
+  const confirmed = await store.confirmStagedUpload(staged.uploadId, {
+    documents: [
+      {
+        id: staged.documents[0].id,
+        title: "确认后的标题",
+        fileName: "campaign-final.html",
+        visibility: "private",
+      },
+    ],
+  });
+
+  assert.equal(confirmed.length, 1);
+  assert.equal(confirmed[0].title, "确认后的标题");
+  assert.equal(confirmed[0].fileName, "campaign-final.html");
+  assert.equal(confirmed[0].visibility, "private");
+  assert.equal(confirmed[0].directoryName, "launch");
+  assert.match(
+    path.basename(confirmed[0].generatedPath),
+    new RegExp(`^\\d{8}-campaign-final-${confirmed[0].slug}\\.html$`),
+  );
+  assert.match(
+    await store.readPageHtml(confirmed[0]),
+    /<base data-tokdoc-base href="\/page-assets\/[^/]+\/launch\/">/,
+  );
+  assert.equal(store.listPages().length, 1);
+  await assert.rejects(
+    () => store.confirmStagedUpload(staged.uploadId, {}),
+    /Upload batch not found/,
+  );
+});
+
+test("injects configured tracking code into newly generated HTML pages", async (t) => {
+  const { store, db, dataDir } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+
+  await store.saveSettings({
+    trackingCode: "<script data-test-tracker>window.__tracked = true;</script>",
+  });
+
+  const page = await store.importBuffer({
+    fileName: "tracked.html",
+    relativePath: "tracked.html",
+    buffer: Buffer.from(
+      "<!doctype html><html><head><title>统计页</title><!-- tokhtml-tracking:start --><script>window.oldTracker=true</script><!-- tokhtml-tracking:end --></head><body><h1>统计页</h1></body></html>",
+    ),
+  });
+  const html = await store.readPageHtml(page);
+
+  assert.match(html, /<!-- tokdoc-tracking:start -->/);
+  assert.doesNotMatch(html, /tokhtml-tracking/);
+  assert.doesNotMatch(html, /oldTracker/);
+  assert.match(
+    html,
+    /<script data-test-tracker>window\.__tracked = true;<\/script>/,
+  );
+  assert.ok(html.indexOf("data-test-tracker") < html.indexOf("</head>"));
+  assert.equal((html.match(/data-test-tracker/g) || []).length, 1);
+});
+
+test("autosaves content with revision lock and creates restorable versions", async (t) => {
+  const { store, db, dataDir } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+
+  const page = await store.importBuffer({
+    fileName: "landing.html",
+    relativePath: "landing.html",
+    buffer: Buffer.from(
+      "<!doctype html><html><head><title>原始标题</title></head><body><h1>原始标题</h1></body></html>",
+    ),
+  });
+
+  const saved = await store.savePageContent(page.id, {
+    revision: page.revision,
+    reason: "autosave",
+    html: "<!doctype html><html><head><title>新标题</title></head><body><h1>新标题</h1><p>已修改</p></body></html>",
+  });
+
+  assert.equal(saved.title, "新标题");
+  assert.equal(saved.revision, 2);
+  assert.equal(saved.edited, true);
+  assert.equal(store.listVersions(page.id).length, 1);
+
+  await assert.rejects(
+    () =>
+      store.savePageContent(page.id, {
+        revision: page.revision,
+        html: "<!doctype html><title>旧版本提交</title>",
+      }),
+    /Revision conflict/,
+  );
+
+  const restored = await store.restoreVersion(
+    page.id,
+    store.listVersions(page.id).at(-1).id,
+  );
+  assert.equal(restored.revision, 3);
+  assert.match(await store.readPageHtml(restored), /原始标题/);
+});
+
+test("rescans watch directory and upserts HTML files", async (t) => {
+  const { store, db, dataDir, watchDir } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+
+  await fs.mkdir(path.join(watchDir, "school"), { recursive: true });
+  await fs.writeFile(
+    path.join(watchDir, "school", "admission.html"),
+    "<!doctype html><html><head><title>招生页</title></head><body><h1>招生页</h1></body></html>",
+  );
+  const watch = await store.addWatchDir({
+    path: watchDir,
+    name: "html-inbox",
+    createIfMissing: true,
+  });
+  const scanned = await store.rescanWatchDir(watch.id);
+  const pages = store.listPages();
+
+  assert.equal(scanned.htmlCount, 1);
+  assert.equal(pages.length, 1);
+  assert.equal(pages[0].directoryName, "school");
+  assert.equal(pages[0].sourceType, "watch");
+});
+
+test("marks inaccessible watch directories as errored instead of throwing", async (t) => {
+  const { store, db, dataDir } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+
+  const blocker = path.join(dataDir, "not-a-directory");
+  await fs.writeFile(blocker, "file");
+  const watch = await store.addWatchDir({
+    path: path.join(blocker, "watch"),
+    name: "broken-watch",
+    createIfMissing: false,
+  });
+  const rescanned = await store.rescanWatchDir(watch.id);
+
+  assert.equal(rescanned.status, "error");
+  assert.equal(rescanned.htmlCount, 0);
+  assert.equal(store.listPages().length, 0);
+});
+
+test("paginates page list with a default page size of 20", async (t) => {
+  const { store, db, dataDir } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+
+  for (let index = 1; index <= 25; index += 1) {
+    await store.importBuffer({
+      fileName: `page-${String(index).padStart(2, "0")}.html`,
+      relativePath: `page-${String(index).padStart(2, "0")}.html`,
+      buffer: Buffer.from(
+        `<!doctype html><html><head><title>页面 ${index}</title></head><body><h1>页面 ${index}</h1></body></html>`,
+      ),
+    });
+  }
+
+  const firstPage = store.listPagesPage();
+  const secondPage = store.listPagesPage({ page: 2 });
+
+  assert.equal(firstPage.pages.length, 20);
+  assert.equal(firstPage.pagination.pageSize, 20);
+  assert.equal(firstPage.pagination.total, 25);
+  assert.equal(firstPage.pagination.totalPages, 2);
+  assert.equal(secondPage.pages.length, 5);
+  assert.equal(secondPage.pagination.page, 2);
+});
+
+test("builds a public page list with type filters and public-only fields", async (t) => {
+  const { store, db, dataDir } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+
+  const htmlPage = await store.importBuffer({
+    fileName: "public-html.html",
+    relativePath: "docs/public-html.html",
+    buffer: Buffer.from(
+      "<!doctype html><html><head><title>公开 HTML</title></head><body><h1>公开 HTML</h1></body></html>",
+    ),
+  });
+  const pdfPage = await store.importBuffer({
+    fileName: "public-pdf.pdf",
+    relativePath: "docs/public-pdf.pdf",
+    buffer: Buffer.from("%PDF-1.4\npublic pdf\n"),
+  });
+  const privatePage = await store.importBuffer({
+    fileName: "private-html.html",
+    relativePath: "docs/private-html.html",
+    buffer: Buffer.from(
+      "<!doctype html><html><head><title>私有 HTML</title></head><body><h1>私有 HTML</h1></body></html>",
+    ),
+    visibility: "private",
+  });
+  const trashed = await store.importBuffer({
+    fileName: "trashed.html",
+    relativePath: "trash/trashed.html",
+    buffer: Buffer.from(
+      "<!doctype html><html><head><title>不公开</title></head><body><h1>不公开</h1></body></html>",
+    ),
+  });
+  await store.deletePage(trashed.id);
+  store.incrementAccessCount(htmlPage.id);
+  store.incrementAccessCount(htmlPage.id);
+
+  const all = store.listPublicPagesPage();
+  assert.equal(all.pages.length, 2);
+  assert.equal(all.pagination.pageSize, 10);
+  assert.deepEqual(all.stats, { all: 2, html: 1, pdf: 1, word: 0 });
+  assert.equal(
+    all.pages.some((page) => page.slug === privatePage.slug),
+    false,
+  );
+  assert.equal(all.pages[0].url.startsWith("/"), true);
+  assert.equal(Object.hasOwn(all.pages[0], "id"), false);
+  assert.equal(Object.hasOwn(all.pages[0], "sourcePath"), false);
+  assert.equal(Object.hasOwn(all.pages[0], "generatedPath"), false);
+  assert.equal(Object.hasOwn(all.pages[0], "editUrl"), false);
+  assert.equal(Object.hasOwn(all.pages[0], "revision"), false);
+  assert.equal(Object.hasOwn(all.pages[0], "visibility"), false);
+
+  const privateList = store.listPages({ visibility: "private" });
+  assert.equal(privateList.length, 1);
+  assert.equal(privateList[0].slug, privatePage.slug);
+
+  const html = store.listPublicPagesPage({ type: "html" });
+  assert.equal(html.pages.length, 1);
+  assert.equal(html.pages[0].fileType, "html");
+  assert.equal(Object.hasOwn(html.pages[0], "accessCount"), false);
+
+  const pdf = store.listPublicPagesPage({ type: "pdf" });
+  assert.equal(pdf.pages.length, 1);
+  assert.equal(pdf.pages[0].fileType, "pdf");
+
+  db.prepare("UPDATE pages SET updated_at = ? WHERE id = ?").run(
+    "2026-01-01T00:00:00.000Z",
+    htmlPage.id,
+  );
+  db.prepare("UPDATE pages SET updated_at = ? WHERE id = ?").run(
+    "2026-01-02T00:00:00.000Z",
+    pdfPage.id,
+  );
+  const blockedAccessSort = store.listPublicPagesPage({ sort: "access_desc" });
+  assert.equal(blockedAccessSort.pages[0].slug, pdfPage.slug);
+});
+
+test("paginates the public document list with a default page size of 10", async (t) => {
+  const { store, db, dataDir } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+
+  for (let index = 1; index <= 12; index += 1) {
+    await store.importBuffer({
+      fileName: `public-${String(index).padStart(2, "0")}.html`,
+      relativePath: `public-${String(index).padStart(2, "0")}.html`,
+      buffer: Buffer.from(
+        `<!doctype html><html><head><title>公开文档 ${index}</title></head><body><h1>公开文档 ${index}</h1></body></html>`,
+      ),
+    });
+  }
+
+  const firstPage = store.listPublicPagesPage();
+  const secondPage = store.listPublicPagesPage({ page: 2 });
+
+  assert.equal(firstPage.pages.length, 10);
+  assert.equal(firstPage.pagination.pageSize, 10);
+  assert.equal(firstPage.pagination.total, 12);
+  assert.equal(firstPage.pagination.totalPages, 2);
+  assert.equal(secondPage.pages.length, 2);
+  assert.equal(secondPage.pagination.page, 2);
+});
+
+test("stores the public homepage setting with an enabled default", async (t) => {
+  const { store, db, dataDir } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+
+  assert.equal(store.getSettings().publicHomepageEnabled, true);
+  await store.saveSettings({ publicHomepageEnabled: false });
+  assert.equal(store.getSettings().publicHomepageEnabled, false);
+  await store.saveSettings({ publicHomepageEnabled: true });
+  assert.equal(store.getSettings().publicHomepageEnabled, true);
+});
+
+test("tracks page access count for generated HTML views", async (t) => {
+  const { store, db, dataDir } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+
+  const page = await store.importBuffer({
+    fileName: "view-count.html",
+    relativePath: "view-count.html",
+    buffer: Buffer.from(
+      "<!doctype html><html><head><title>访问统计</title></head><body><h1>访问统计</h1></body></html>",
+    ),
+  });
+
+  assert.equal(page.accessCount, 0);
+  assert.equal(store.incrementAccessCount(page.id).accessCount, 1);
+  assert.equal(store.incrementAccessCount(page.id).accessCount, 2);
+  assert.equal(store.getPage(page.id).accessCount, 2);
+});
+
+test("moves deleted pages into an inaccessible recycle bin and restores them", async (t) => {
+  const { store, db, dataDir, config } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+
+  const page = await store.importBuffer({
+    fileName: "trash-me.html",
+    relativePath: "trash-me.html",
+    buffer: Buffer.from(
+      "<!doctype html><html><head><title>回收站页面</title></head><body><h1>回收站页面</h1></body></html>",
+    ),
+  });
+  const originalGeneratedPath = page.generatedPath;
+  await fs.access(originalGeneratedPath);
+
+  const trashed = await store.deletePage(page.id);
+  assert.equal(trashed.deletedAt.length > 0, true);
+  assert.equal(trashed.status, "trashed");
+  assert.equal(store.listPages().length, 0);
+  assert.equal(store.listPages({ scope: "trash" }).length, 1);
+  await assert.rejects(() => fs.access(originalGeneratedPath));
+  await fs.access(trashed.generatedPath);
+  assert.match(
+    trashed.generatedPath,
+    new RegExp(`${path.sep}trash${path.sep}`.replace(/\\/g, "\\\\")),
+  );
+
+  const restored = await store.restoreDeletedPage(page.id);
+  assert.equal(restored.deletedAt, "");
+  assert.equal(restored.status, "published");
+  assert.equal(path.dirname(restored.generatedPath), config.generatedDir);
+  assert.match(
+    path.basename(restored.generatedPath),
+    new RegExp(`^\\d{8}-trash-me-${page.slug}\\.html$`),
+  );
+  assert.equal(store.listPages().length, 1);
+  assert.equal(store.listPages({ scope: "trash" }).length, 0);
+  await fs.access(restored.generatedPath);
+});
+
+test("dashboard statistics and directory facets are independent of filters and match editable capability", async (t) => {
+  const { store, db, dataDir } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+  const a = await store.importBuffer({
+    fileName: "a.html",
+    relativePath: "alpha/a.html",
+    buffer: Buffer.from("<title>A</title>"),
+  });
+  const b = await store.importBuffer({
+    fileName: "b.html",
+    buffer: Buffer.from("<title>B</title>"),
+  });
+  const c = await store.importBuffer({
+    fileName: "c.pdf",
+    relativePath: "beta/c.pdf",
+    buffer: Buffer.from("%PDF-1.4"),
+  });
+  db.prepare("UPDATE pages SET status = ? WHERE id = ?").run("missing", b.id);
+  await store.deletePage(c.id);
+  const summary = store.managementSummary({
+    q: "nothing",
+    type: "pdf",
+    page: 50,
+  });
+  assert.equal(summary.stats.all, 2);
+  assert.equal(summary.stats.editable, 2);
+  assert.equal(summary.stats.todayCreated, 2);
+  assert.equal(summary.stats.trash, 1);
+  assert.deepEqual(summary.stats.byType, { html: 2, pdf: 0, word: 0, other: 0 });
+  assert.deepEqual(summary.facets.directories, [
+    { name: "", count: 1 },
+    { name: "alpha", count: 1 },
+  ]);
+  assert.deepEqual(
+    store.listPages({ directoryEmpty: "1" }).map((p) => p.id),
+    [b.id],
+  );
+  assert.deepEqual(
+    store.managementSummary({ scope: "trash" }).facets.directories,
+    [{ name: "beta", count: 1 }],
+  );
+  const end = new Date(Date.now() - 86400000).toISOString();
+  const start = new Date(Date.now() - 172800000).toISOString();
+  assert.equal(
+    store.managementSummary({ dayStart: start, dayEnd: end }).stats
+      .todayCreated,
+    0,
+  );
+  for (const filters of [
+    { dayStart: start },
+    { dayStart: "bad", dayEnd: end },
+    { dayStart: end, dayEnd: start },
+    { dayStart: "2026-02-30T00:00:00Z", dayEnd: "2026-03-03T00:00:00Z" },
+  ]) {
+    assert.throws(() => store.managementSummary(filters), /日期/);
+  }
+  await store.restoreDeletedPage(c.id);
+  assert.equal(store.managementSummary().stats.all, 3);
+  assert.equal(store.managementSummary().stats.todayCreated, 3);
+  assert.ok(a.id);
+});
+
+
+test("other documents group all remaining types while excluding trash and legacy HTML", async (t) => {
+  const { store, db, dataDir } = await createStore();
+  t.after(() => db.close());
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+  const ids = {};
+  for (const [name, type] of [["html", "html"], ["pdf", "pdf"], ["word", "word"], ["markdown", "markdown"], ["excel", "excel"], ["deleted", "ppt"], ["empty", ""]]) {
+    const page = await store.importBuffer({ fileName: name + ".html", buffer: Buffer.from("<title>" + name + "</title>") });
+    ids[name] = page.id;
+    db.prepare("UPDATE pages SET file_type = ? WHERE id = ?").run(type, page.id);
+  }
+  db.prepare("UPDATE pages SET deleted_at = ? WHERE id = ?").run(new Date().toISOString(), ids.deleted);
+  assert.deepEqual(new Set(store.listPages({ type: "other" }).map(p => p.id)), new Set([ids.markdown, ids.excel]));
+  assert.deepEqual(store.managementSummary({ type: "other", q: "missing", page: 99 }).stats.byType, { html: 2, pdf: 1, word: 1, other: 2 });
+  assert.equal(store.listPagesPage({ type: "other", pageSize: 1 }).pagination.total, 2);
+  assert.deepEqual(store.listPages({ type: "other", scope: "trash" }).map(p => p.id), [ids.deleted]);
+  assert.equal(store.managementSummary({ scope: "trash" }).stats.all, 6);
+});

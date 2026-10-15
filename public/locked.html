@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,noarchive,nofollow"><title>输入访问密码 · 猎看文档系统</title>
+  <link rel="stylesheet" href="/assets/styles/tokens.css?v=20261009">
+  <link rel="stylesheet" href="/assets/styles/components.css?v=20261009">
+  <link rel="stylesheet" href="/assets/styles/locked.css?v=20261009-access1">
+</head>
+<body class="lkdoc locked-page" data-document-slug="{{SLUG}}">
+  <div class="document-placeholder" aria-hidden="true"><div class="placeholder-heading"></div><div class="placeholder-line"></div><div class="placeholder-line short"></div><div class="placeholder-media"></div><div class="placeholder-line"></div><div class="placeholder-line"></div><div class="placeholder-line short"></div></div>
+  <main class="locked-summary"><span class="lock-mark" data-icon="lock"></span><h1>文档已启用密码保护</h1><p>验证访问密码后，即可继续阅读。</p><div class="locked-actions"><button class="btn primary" id="reopenUnlock" type="button">输入密码</button>{{HOME_LINK}}</div></main>
+  <dialog id="unlockDialog" class="dialog unlock-dialog" aria-labelledby="unlockTitle" aria-describedby="unlockDescription">
+    <button class="btn icon-btn unlock-close" id="closeUnlock" aria-label="暂不查看，关闭密码窗口" type="button" data-icon="close"></button>
+    <div class="unlock-info"><span class="lock-mark" data-icon="lock"></span><span class="unlock-eyebrow">文档访问验证</span><h2 id="unlockTitle">这份文档需要访问密码</h2><p id="unlockDescription">请输入分享者提供的密码，验证后即可阅读。</p><p class="unlock-help">忘记密码？<br>请联系分享这份文档的人。</p></div>
+    <form id="unlockForm" class="unlock-form">
+      <label class="field" for="readerPassword"><span>访问密码</span></label>
+      <div class="password-control"><input id="readerPassword" name="password" type="password" placeholder="请输入访问密码" autocomplete="off" required maxlength="256" autofocus><button class="btn" id="toggleReaderPassword" type="button" aria-label="显示访问密码" aria-pressed="false">显示</button></div>
+      <label class="remember-choice"><input id="rememberReader" type="checkbox" checked><span>在此浏览器中记住访问权限</span></label>
+      <p class="remember-hint" id="rememberHint">下次打开这份文档可直接阅读。共享设备建议取消勾选。</p>
+      <p class="unlock-status" id="unlockStatus" role="status" aria-live="polite"></p>
+      <button class="btn primary" id="submitUnlock" type="submit">验证并阅读</button><button class="btn" id="dismissUnlock" type="button">暂不查看</button>
+    </form>
+  </dialog>
+  <noscript><p class="noscript-message">请启用 JavaScript 后输入访问密码。</p></noscript>
+  <script type="module" src="/assets/locked.js?v=20261009-access1"></script>
+</body></html>

@@ -1,0 +1,29 @@
+:root {
+  --brand: #0f62fe;
+  --selected: #edf2ff;
+  --canvas: #f5f7fa;
+  --surface: #ffffff;
+  --ink: #16181d;
+  --muted: #697386;
+  --weak: #9aa3b2;
+  --line: #e9ecf1;
+  --control-line: #e5e9f0;
+  --success: #087443;
+  --warning: #8b600e;
+  --danger: #b42318;
+  --success-bg: #ecfdf3;
+  --warning-bg: #fffaeb;
+  --danger-bg: #fff1f0;
+  --font:
+    Inter, -apple-system, system-ui, "PingFang SC", "Helvetica Neue",
+    "Microsoft YaHei", sans-serif;
+  --sidebar-width: 228px;
+  --sidebar-offset: var(--sidebar-width);
+  --topbar-height: 60px;
+  --content-width: 1200px;
+  --radius-panel: 14px;
+  --radius-menu: 9px;
+  --radius-input: 8px;
+  --radius-tool: 6px;
+  color-scheme: light;
+}

@@ -1,0 +1,13 @@
+# Build from application source only. Local data and working notes stay outside.
+**
+!Dockerfile
+!.dockerignore
+!package.json
+!package-lock.json
+!LICENSE
+!src/
+!src/**
+!public/
+!public/**
+!test/
+!test/**
