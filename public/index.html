@@ -6,7 +6,7 @@
     <title>猎看文档系统</title>
     <link rel="stylesheet" href="/assets/styles/tokens.css?v=20261009" />
     <link rel="stylesheet" href="/assets/styles/components.css?v=20261009" />
-    <link rel="stylesheet" href="/assets/styles/admin.css?v=20261009-settings-tabs1" />
+    <link rel="stylesheet" href="/assets/styles/admin.css?v=20261018-upload1" />
   </head>
   <body class="lkdoc admin-page" data-auth="loading">
     <div class="boot-screen" id="bootScreen" role="status">正在加载工作台…</div>
@@ -675,11 +675,11 @@
       multiple
       hidden
     />
-    <dialog class="dialog" id="uploadBackdrop" aria-labelledby="uploadTitle">
+    <dialog class="dialog upload-dialog" id="uploadBackdrop" aria-labelledby="uploadTitle" aria-describedby="uploadDescription">
       <div class="dialog-header">
         <div>
-          <h2 id="uploadTitle">上传文档</h2>
-          <p class="hint">上传完成后核对名称与访问设置，再确认入库。</p>
+          <h2 id="uploadTitle" tabindex="-1" autofocus>上传文档</h2>
+          <p class="hint" id="uploadDescription">在当前页面完成上传，核对信息后即可生成阅读链接。</p>
         </div>
         <button
           class="btn icon-btn"
@@ -690,37 +690,61 @@
           <span data-icon="close"></span>
         </button>
       </div>
+      <ol class="upload-flow" aria-label="上传流程">
+        <li data-upload-step="1" aria-current="step"><span>1</span>上传文件</li>
+        <li data-upload-step="2"><span>2</span>核对信息</li>
+        <li data-upload-step="3"><span>3</span>完成入库</li>
+      </ol>
       <div class="dialog-body">
-        <div class="upload-progress-head">
-          <strong id="uploadProgressText">正在准备上传</strong
-          ><span class="pill" id="uploadProgressBadge">准备</span>
-        </div>
-        <p class="hint" id="uploadProgressDetail"></p>
-        <div
-          class="upload-progress"
-          role="progressbar"
-          id="uploadProgress"
-          aria-label="上传进度"
-          aria-valuemin="0"
-          aria-valuemax="100"
-        >
-          <div class="upload-progress-bar" id="uploadProgressBar"></div>
-        </div>
-        <div id="uploadReview" hidden>
-          <div class="upload-review-head">
-            <h3>核对文档</h3>
-            <span class="hint" id="uploadReviewCount"></span>
+        <div id="uploadWork">
+          <div class="upload-status" role="status" aria-live="polite" aria-atomic="true">
+            <div class="upload-progress-head">
+              <strong id="uploadProgressText">正在准备上传</strong>
+              <span class="pill" id="uploadProgressBadge">准备</span>
+            </div>
+            <p class="hint" id="uploadProgressDetail"></p>
           </div>
-          <p class="hint" id="uploadReviewSummary"></p>
-          <div id="uploadReviewRows"></div>
+          <div
+            class="upload-progress"
+            role="progressbar"
+            id="uploadProgress"
+            aria-label="上传进度"
+            aria-valuemin="0"
+            aria-valuemax="100"
+          >
+            <div class="upload-progress-bar" id="uploadProgressBar"></div>
+          </div>
+          <div class="upload-review-layout" id="uploadReview" hidden>
+            <section aria-labelledby="uploadReviewTitle">
+              <div class="upload-review-head">
+                <h3 id="uploadReviewTitle">本次上传</h3>
+                <span class="hint" id="uploadReviewCount"></span>
+              </div>
+              <p class="hint" id="uploadReviewSummary"></p>
+              <div id="uploadReviewRows"></div>
+            </section>
+            <aside class="upload-guide" aria-labelledby="uploadGuideTitle">
+              <h3 id="uploadGuideTitle">确认前，检查这两项</h3>
+              <div><strong>名称是否清楚</strong><p>文档标题用于列表与阅读页。修改文件名时，请保留原扩展名。</p></div>
+              <div><strong>谁可以访问</strong><p>公开：首页可见。<br>仅链接：通过阅读链接访问。<br>私有：仅管理员登录后可见。</p></div>
+              <p class="upload-guide-note">公开和仅链接文档可加设访问密码。入库后仍可在文档管理中调整权限。</p>
+            </aside>
+          </div>
         </div>
+        <section id="uploadSuccess" class="upload-success" aria-labelledby="uploadSuccessTitle" hidden>
+          <div class="upload-success-heading"><span class="upload-success-icon" data-icon="document" aria-hidden="true"></span><div><h3 id="uploadSuccessTitle"></h3><p class="hint">阅读链接已生成，可打开检查内容；分享前请确认访问权限。</p></div></div>
+          <ul id="uploadSuccessList" class="upload-success-list" aria-label="已入库文档"></ul>
+          <p class="hint" id="uploadSuccessNote" role="status">可前往文档管理复制链接、调整权限或更新内容。</p>
+        </section>
       </div>
       <div class="dialog-footer">
-        <span class="hint" id="uploadFooterNote">确认前保存在暂存区。</span
-        ><button class="btn" id="cancelUpload" type="button">取消</button
+        <span class="hint" id="uploadFooterNote">确认前保存在暂存区，取消会清理本次上传。</span
+        ><button class="btn" id="cancelUpload" type="button">取消上传</button
         ><button class="btn primary" id="confirmUpload" type="button" disabled>
           确认入库
         </button>
+        <button class="btn" id="continueUpload" type="button" hidden>继续上传</button>
+        <button class="btn primary" id="viewUploadedDocuments" type="button" hidden>查看文档</button>
       </div>
     </dialog>
     <dialog class="dialog access-settings-dialog" id="accessDialog" aria-labelledby="accessTitle">
@@ -770,6 +794,6 @@
       </div>
     </dialog>
     <div class="toast" id="toast" role="status" hidden></div>
-    <script type="module" src="/assets/app.js?v=20261009-settings-tabs1"></script>
+    <script type="module" src="/assets/app.js?v=20261018-upload1"></script>
   </body>
 </html>

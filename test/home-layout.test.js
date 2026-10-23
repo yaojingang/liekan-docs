@@ -547,6 +547,68 @@ test("partial upload conversion failure requires verification and cannot replay 
   );
 });
 
+test("successful upload keeps the result on the current page and clears password drafts without replay", async () => {
+  const requests = [];
+  const page = { id: "A", title: "产品发布方案", fileName: "launch.html", url: "/abc123", visibility: "public", homepageListed: false, hasAccessPassword: true };
+  const { document, app, location } = await appHarness(async (url, options = {}) => {
+    requests.push({ url, method: options.method });
+    return response(options.method === "POST" ? { pages: [page] } : { ...listResult, pagination: { ...listResult.pagination, page: 2, totalPages: 2 } });
+  }, "/admin?view=documents&type=pdf&page=2");
+  app.setSession(true);
+  const upload = { uploadId: "A", documents: [{ ...page, fileType: "html" }] };
+  app.setUpload(upload);
+  app.renderUploadReview(upload);
+  const row = document.querySelector("[data-upload-doc-id]");
+  row.querySelector('[data-upload-field="protected"]').checked = true;
+  row.querySelector('[data-upload-field="password"]').value = "draft-password";
+  document.querySelector("#uploadBackdrop").showModal();
+  await app.confirmUpload();
+  await app.confirmUpload();
+  assert.equal(requests.filter(request => request.method === "POST").length, 1);
+  assert.equal(document.querySelector("#uploadBackdrop").open, true);
+  assert.equal(document.querySelector("#uploadSuccess").hidden, false);
+  assert.match(document.querySelector("#uploadSuccessTitle").textContent, /1 个文档/);
+  assert.equal(document.querySelector("#uploadSuccessList a").getAttribute("href"), "/abc123");
+  assert.match(document.querySelector("#uploadSuccessList").textContent, /仅链接 · 需要密码/);
+  assert.equal(document.querySelector("#uploadReviewRows").childElementCount, 0);
+  assert.equal(app.queryString().get("page"), "2");
+  assert.equal(app.queryString().get("type"), "pdf");
+  assert.equal(location.pathname, "/admin");
+  await app.cancelUpload();
+  assert.equal(document.querySelector("#uploadBackdrop").open, false);
+  assert.equal(requests.filter(request => request.method === "DELETE").length, 0);
+});
+
+test("a failed list refresh preserves the successful upload and the next-upload entry", async () => {
+  const { document, app } = await appHarness(async (url, options = {}) => {
+    if (options.method === "POST") return response({ pages: [{ title: "A", fileName: "a.html", url: "/abc123" }] });
+    throw new Error("Offline");
+  });
+  app.setSession(true);
+  app.setUpload({ uploadId: "A" });
+  document.querySelector("#uploadBackdrop").showModal();
+  await app.confirmUpload();
+  assert.equal(document.querySelector("#uploadSuccess").hidden, false);
+  assert.match(document.querySelector("#uploadSuccessNote").textContent, /已成功入库.*刷新失败/);
+  let picked = 0;
+  document.querySelector("#fileInput").click = () => { picked++; };
+  document.querySelector("#continueUpload").click();
+  assert.equal(picked, 1);
+  assert.equal(document.querySelector("#uploadBackdrop").open, false);
+  assert.equal(app.getUpload(), null);
+  assert.equal(document.querySelector("#uploadSuccessList").childElementCount, 0);
+});
+
+test("viewing uploaded documents explicitly leaves old filters and the trash scope", async () => {
+  const { document, app } = await appHarness(async () => response(listResult), "/admin?scope=trash&type=pdf&q=old");
+  app.setSession(true);
+  document.querySelector("#uploadBackdrop").showModal();
+  document.querySelector("#viewUploadedDocuments").click();
+  assert.equal(document.querySelector("#uploadBackdrop").open, false);
+  assert.equal(app.queryString().get("view"), "documents");
+  for (const key of ["q", "type", "scope", "page"]) assert.equal(app.queryString().has(key), false, key);
+});
+
 for (const destination of ["?view=documents", "?preview=B"]) {
   test(`history navigation reconciles ${destination || "the list"} even when the list request fails`, async () => {
     const reading = destination.includes("preview=");
