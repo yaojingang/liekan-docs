@@ -273,7 +273,6 @@
   width: 0;
   background: var(--brand);
   border-radius: 6px;
-  transition: width 0.15s;
 }
 .upload-progress-bar.indeterminate {
   width: 100% !important;
@@ -555,3 +554,91 @@
 .doc-table .visibility-toggle { white-space:nowrap; }
 @media(max-width:800px) { .upload-review-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }.upload-policy { grid-column:1/-1; } }
 @media(max-width:600px) { .upload-review-row,.upload-policy { grid-template-columns:minmax(0,1fr); }.upload-review-row > *, .upload-policy > * { grid-column:1/-1; }.access-memory { flex-direction:column; align-items:start; gap:12px; }.access-settings-dialog .dialog-footer > .hint { flex-basis:100%; }.access-settings-dialog .dialog-footer .btn { flex:1; }.upload-policy > .btn { width:100%; } }
+
+/* Keep the upload workflow centered in the viewport, with persistent actions. */
+.upload-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(1120px, calc(100vw - 48px));
+  max-height: calc(100dvh - 48px);
+}
+.upload-dialog[open] { display: flex; flex-direction: column; }
+.upload-dialog .dialog-header,
+.upload-dialog .dialog-footer,
+.upload-flow { flex-shrink: 0; }
+.upload-dialog .dialog-header { align-items: flex-start; padding: 24px 28px 20px; }
+.upload-dialog .dialog-header > div { min-width: 0; }
+.upload-dialog .dialog-header h2 { font-size: 20px; line-height: 1.5; }
+.upload-dialog .dialog-header .hint { margin-top: 6px; font-size: 13px; line-height: 1.7; }
+.upload-dialog .dialog-header .icon-btn { flex-shrink: 0; width: 44px; height: 44px; }
+.upload-flow {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 16px 28px;
+  margin: 0;
+  list-style: none;
+  border-bottom: 1px solid var(--line);
+  background: var(--canvas);
+}
+.upload-flow li { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.upload-flow li > span { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--control-line); border-radius: 50%; background: var(--surface); font-variant-numeric: tabular-nums; }
+.upload-flow [aria-current="step"] { color: var(--brand); font-weight: 600; }
+.upload-flow [aria-current="step"] > span { background: var(--brand); color: white; border-color: var(--brand); }
+.upload-flow .is-complete { color: var(--success); }
+.upload-flow .is-complete > span { background: var(--success-bg); color: var(--success); border-color: var(--success); }
+.upload-dialog .dialog-body { min-height: 0; max-height: none; padding: 24px 28px; overscroll-behavior: contain; }
+.upload-dialog .hint { line-height: 1.7; overflow-wrap: anywhere; }
+.upload-dialog .upload-progress { margin: 12px 0 24px; }
+.upload-review-layout { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 28px; align-items: start; }
+.upload-review-layout > section { min-width: 0; }
+.upload-dialog .upload-review-head { align-items: center; }
+.upload-dialog .upload-review-head h3 { font-size: 14px; }
+.upload-dialog #uploadReviewRows { margin-top: 16px; }
+.upload-dialog .upload-review-row { grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1fr); gap: 12px 16px; padding: 20px 0; }
+.upload-dialog .upload-review-row:last-child { padding-bottom: 0; }
+.upload-dialog .field input { min-height: 44px; }
+.upload-guide { padding: 20px; background: var(--canvas); border-radius: var(--radius-input); }
+.upload-guide > div { margin-top: 20px; }
+.upload-guide strong { font-size: 12px; font-weight: 600; }
+.upload-guide p { margin-top: 6px; font-size: 12px; line-height: 1.8; color: var(--muted); }
+.upload-guide .upload-guide-note { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--control-line); }
+.upload-dialog .dialog-footer { padding: 16px 28px; flex-wrap: wrap; }
+.upload-dialog .dialog-footer > .hint { flex: 1; min-width: 220px; }
+.upload-dialog .dialog-footer .btn { min-height: 44px; white-space: nowrap; }
+.upload-success-heading { display: flex; gap: 16px; align-items: center; }
+.upload-success-heading h3 { font-size: 18px; margin-bottom: 4px; }
+.upload-success-icon { display: grid; place-items: center; flex: 0 0 44px; height: 44px; border-radius: 50%; background: var(--success-bg); color: var(--success); }
+.upload-success-icon svg { width: 24px; height: 24px; }
+.upload-success-list { list-style: none; padding: 0; margin: 24px 0 16px; }
+.upload-success-list li { display: flex; gap: 16px; align-items: center; justify-content: space-between; padding: 16px 0; border-top: 1px solid var(--line); }
+.upload-success-list li > div { min-width: 0; display: grid; gap: 4px; overflow-wrap: anywhere; }
+.upload-success-list .btn { flex-shrink: 0; min-height: 44px; }
+@media (max-width: 1000px) {
+  .upload-review-layout { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .upload-guide { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; }
+  .upload-guide > h3, .upload-guide .upload-guide-note { grid-column: 1/-1; }
+  .upload-guide > div, .upload-guide .upload-guide-note { margin-top: 0; }
+}
+@media (max-width: 800px) {
+  .upload-dialog .upload-review-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .upload-dialog .upload-policy { grid-column: 1/-1; }
+}
+@media (max-width: 600px) {
+  .upload-dialog { width: calc(100vw - 32px); max-height: calc(100dvh - 32px); }
+  .upload-dialog .dialog-header, .upload-dialog .dialog-body { padding: 16px; }
+  .upload-dialog .dialog-header h2 { font-size: 17px; }
+  .upload-flow { padding: 12px 16px; gap: 12px; justify-content: space-between; }
+  .upload-flow li { font-size: 12px; gap: 5px; }
+  .upload-flow li > span { width: 20px; height: 20px; }
+  .upload-dialog .upload-review-row, .upload-guide { grid-template-columns: minmax(0, 1fr); }
+  .upload-dialog .upload-review-row > * { grid-column: 1/-1; }
+  .upload-dialog .dialog-footer { padding: 12px 16px; }
+  .upload-dialog .dialog-footer > .hint { flex-basis: 100%; min-width: 0; display: block; }
+  .upload-success-heading { align-items: flex-start; gap: 12px; }
+  .upload-success-heading h3 { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .upload-dialog .upload-progress-bar.indeterminate { animation: none; background: var(--brand); }
+}

@@ -49,6 +49,7 @@ let previewPage = null,
   historyPage = null,
   historySerial = 0;
 let stagedUpload = null,
+  completedUpload = null,
   activeUploadRequest = null,
   uploadCancelled = false,
   committing = false,
@@ -1038,6 +1039,27 @@ function uploadProgress(text, detail, badge, percent = null) {
   if (percent === null) $("#uploadProgress").removeAttribute("aria-valuenow");
   else $("#uploadProgress").setAttribute("aria-valuenow", String(percent));
 }
+function uploadStage(stage) {
+  const done = stage === "done";
+  const step = stage === "upload" ? 1 : done ? 3 : 2;
+  const titles = { upload: "正在上传文档", review: "文件已上传，请核对信息", saving: "正在保存文档", done: "文档已入库" };
+  const descriptions = {
+    upload: "请保持当前页面打开。上传完成后，可在这里调整名称与访问权限。",
+    review: "确认文档名称和访问方式，点击「确认入库」生成阅读链接。",
+    saving: "正在生成阅读链接，Word 文档需要转换为 PDF，请稍候。",
+    done: "本次上传已完成，你可以继续上传，或前往文档管理。",
+  };
+  $("#uploadTitle").textContent = titles[stage];
+  $("#uploadDescription").textContent = descriptions[stage];
+  $("#uploadWork").hidden = done;
+  $("#uploadSuccess").hidden = !done;
+  document.querySelectorAll("[data-upload-step]").forEach(el => {
+    const number = Number(el.dataset.uploadStep);
+    if (number === step) el.setAttribute("aria-current", "step");
+    else el.removeAttribute("aria-current");
+    el.classList.toggle("is-complete", number < step || done);
+  });
+}
 function uploadLocks() {
   $("#uploadReviewRows").querySelectorAll("input,select,button").forEach(el => { el.disabled = committing || cancelling; });
   $("#uploadReviewRows").querySelectorAll("[data-upload-doc-id]").forEach(uploadPolicyState);
@@ -1046,18 +1068,27 @@ function uploadLocks() {
       committing ||
       cancelling ||
       (id === "confirmUpload" && (!stagedUpload || uploadUnknown));
-  $("#confirmUpload").textContent = committing ? "生成中…" : "确认入库";
+  $("#confirmUpload").textContent = committing ? "正在入库…" : stagedUpload?.documents?.length ? `确认入库（${stagedUpload.documents.length}）` : "确认入库";
+  $("#confirmUpload").hidden = Boolean(completedUpload);
+  $("#cancelUpload").hidden = Boolean(completedUpload);
+  $("#cancelUpload").textContent = cancelling ? "正在清理…" : "取消上传";
+  $("#closeUpload").setAttribute("aria-label", completedUpload ? "关闭上传结果" : "取消本次上传");
+  $("#continueUpload").hidden = !completedUpload;
+  $("#viewUploadedDocuments").hidden = !completedUpload;
   $("#verifyUpload").hidden = !uploadUnknown;
   $("#verifyUpload").disabled = committing || cancelling;
 }
 function resetUpload() {
   stagedUpload = null;
+  completedUpload = null;
   uploadUnknown = false;
   uploadCancelled = false;
   $("#uploadReview").hidden = true;
   $("#uploadReviewRows").innerHTML = "";
+  $("#uploadSuccessList").innerHTML = "";
+  uploadStage("upload");
   $("#uploadFooterNote").textContent =
-    "确认后才会写入文档列表；取消会清理本次暂存。";
+    "确认后才会加入文档列表；取消会清理本次上传。";
   uploadLocks();
 }
 function accessLabel(page) { return page.visibility === "private" ? "私有" : page.homepageListed === false ? "仅链接" : "公开"; }
@@ -1072,12 +1103,28 @@ function uploadPolicyState(row) {
   row.querySelector('.upload-policy-hint').textContent = mode === "private" ? "私有文档通过管理员登录访问" : (mode === "unlisted" ? "仅获得链接的人可访问" : "此文档会出现在首页") + (toggle.checked ? "，打开文档需要验证密码" : "");
 }
 function renderUploadReview(upload) {
+  uploadStage("review");
   $("#uploadReview").hidden = false;
   $("#uploadReviewCount").textContent = `${upload.documents.length} 个文档`;
-  $("#uploadReviewSummary").textContent = upload.assetCount ? `另有 ${upload.assetCount} 个附件随目录同步。` : "核对标题、文件名与访问设置后确认入库。";
+  $("#uploadReviewSummary").textContent = upload.assetCount ? `包含 ${upload.assetCount} 个目录附件，将随文档一同保存。` : "已提取文档信息，可直接修改下方内容。";
   $("#uploadReviewRows").innerHTML = upload.documents.map(item => `<div class="upload-review-row" data-upload-doc-id="${esc(item.id)}"><div class="upload-review-type"><span class="pill">${esc(item.fileType.toUpperCase())}</span><span title="${esc(item.relativePath)}">${esc(item.directoryName || "无目录")}</span></div><label class="field"><span>文档标题</span><input data-upload-field="title" aria-label="文档标题" value="${esc(item.title)}"></label><label class="field"><span>文件名称</span><input data-upload-field="fileName" aria-label="文件名称" value="${esc(item.fileName)}" required></label><div class="upload-policy"><label class="field"><span>访问方式</span><select data-upload-field="visibility" aria-label="文档访问方式">${accessOptions}</select></label><div class="upload-password"><label class="checkbox-field"><input type="checkbox" data-upload-field="protected"><span>启用访问密码</span></label><div class="upload-password-input password-control" hidden><input type="password" data-upload-field="password" autocomplete="new-password" aria-label="访问密码" placeholder="设置访问密码，至少 6 个字符"><button type="button" class="btn" data-show-upload-password>显示</button></div></div><p class="hint upload-policy-hint"></p>${upload.documents.length > 1 ? `<button type="button" class="btn" data-apply-upload-policy>应用到本批 ${upload.documents.length} 个文档</button>` : ""}</div></div>`).join("");
   document.querySelectorAll('[data-upload-doc-id]').forEach((row,index) => { row.querySelector('[data-upload-field="visibility"]').value = upload.documents[index].visibility || "public"; uploadPolicyState(row); });
   uploadLocks();
+}
+function renderUploadSuccess(result) {
+  completedUpload = result;
+  stagedUpload = null;
+  uploadUnknown = false;
+  // Discard password drafts as soon as the upload is committed.
+  $("#uploadReviewRows").innerHTML = "";
+  const imported = result.pages || [];
+  $("#uploadSuccessTitle").textContent = `已成功入库 ${imported.length} 个文档`;
+  $("#uploadSuccessList").innerHTML = imported.map(page => `<li><div><strong>${esc(page.title || page.fileName)}</strong><span class="hint">${esc(page.fileName)} · ${esc(accessLabel(page))}${page.hasAccessPassword ? " · 需要密码" : ""}</span></div><a class="btn" href="${esc(page.url)}" target="_blank" rel="noopener" aria-label="在新标签页打开 ${esc(page.title || page.fileName)}">打开文档</a></li>`).join("");
+  $("#uploadSuccessNote").textContent = "可前往文档管理复制链接、调整权限或更新内容。";
+  $("#uploadFooterNote").textContent = "关闭弹窗后，仍可在文档管理中找到这些文档。";
+  uploadStage("done");
+  uploadLocks();
+  $("#uploadTitle").focus({ preventScroll: true });
 }
 function uploadReviewDocuments() {
   return [...document.querySelectorAll("[data-upload-doc-id]")].map(row => {
@@ -1110,7 +1157,7 @@ function uploadWithProgress(form) {
     xhr.upload.onload = () =>
       uploadProgress(
         "正在解析文档",
-        "文件已传输，正在核对文件类型和元信息。",
+        "文件已传输，正在提取标题和文件信息，即将进入核对步骤。",
         "解析中",
       );
     xhr.onload = () => {
@@ -1183,14 +1230,16 @@ async function uploadFiles(files) {
       return;
     }
     uploadProgress(
-      "上传解析完成",
-      "请核对名称与可见性，再确认入库。",
+      "文件已就绪，等待确认入库",
+      "请逐项核对下方信息，确认前文档仅保存在暂存区。",
       "待确认",
       100,
     );
     renderUploadReview(data);
   } catch (error) {
     if (uploadCancelled) return;
+    $("#uploadTitle").textContent = "上传未完成";
+    $("#uploadDescription").textContent = "请查看下方原因，关闭弹窗后可重新选择文件。";
     uploadProgress("上传失败", error.message, "失败", 0);
     uploadLocks();
   }
@@ -1245,10 +1294,11 @@ async function confirmUpload() {
   ].find((input) => !input.reportValidity());
   if (invalid) return;
   committing = true;
+  uploadStage("saving");
   uploadLocks();
   uploadProgress(
     "正在生成文档",
-    "写入正式文档和数据库，Word 文件会转换为 PDF。",
+    "正在保存文档并生成阅读链接，Word 文档需要转换为 PDF，请保持页面打开。",
     "处理中",
   );
   let result;
@@ -1258,6 +1308,7 @@ async function confirmUpload() {
       json("POST", { documents }),
     );
   } catch (error) {
+    uploadStage("review");
     uploadUnknown =
       !error.status || error.status >= 500 || error.status === 422;
     uploadProgress(
@@ -1276,14 +1327,12 @@ async function confirmUpload() {
     committing = false;
     uploadLocks();
   }
-  stagedUpload = null;
-  $("#uploadBackdrop").close();
-  resetUpload();
-  toast(`已入库 ${result.pages?.length || 0} 个文档`);
-  filters.page = 1;
+  renderUploadSuccess(result);
   try {
     await loadList();
   } catch {
+    if (completedUpload === result)
+      $("#uploadSuccessNote").textContent = "文档已成功入库。列表暂时刷新失败，可先打开文档，稍后前往文档管理刷新。";
     notice($("#globalError"), "文档已成功入库，列表刷新失败。", "刷新列表");
   }
 }
@@ -1644,6 +1693,17 @@ $("#loginForm").onsubmit = async (event) => {
 $("#closeUpload").onclick = cancelUpload;
 $("#cancelUpload").onclick = cancelUpload;
 $("#confirmUpload").onclick = confirmUpload;
+$("#continueUpload").onclick = () => {
+  resetUpload();
+  $("#uploadBackdrop").close();
+  $("#fileInput").click();
+};
+$("#viewUploadedDocuments").onclick = () => {
+  resetUpload();
+  $("#uploadBackdrop").close();
+  filters.scope = "active";
+  clearFilters();
+};
 wireDialog($("#uploadBackdrop"), cancelUpload, () => committing || cancelling);
 const verify = document.createElement("button");
 verify.id = "verifyUpload";
