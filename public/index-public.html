@@ -4,93 +4,31 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>猎看文档系统</title>
-    <link rel="stylesheet" href="/assets/styles/tokens.css?v=20261009" />
+    <link rel="stylesheet" href="/assets/styles/tokens.css?v=20261025-brand1" />
     <link rel="stylesheet" href="/assets/styles/components.css?v=20261009" />
     <link
       rel="stylesheet"
-      href="/assets/styles/public.css?v=20261009-date1"
+      href="/assets/styles/public.css?v=20261025-brand1"
     />
   </head>
   <body class="lkdoc public-page">
-    <aside class="shell-sidebar" id="appSidebar" aria-label="资源导航">
-      <a class="brand" href="/"
-        ><span class="brand-mark" data-icon="document"></span
-        ><span class="brand-copy"
-          ><span class="brand-title">{{SITE_NAME}}</span
-          ><span class="brand-caption">DOCUMENT WORKSPACE</span></span
-        ></a
-      ><button
-        class="btn icon-btn drawer-close"
-        id="drawerClose"
-        type="button"
-        aria-label="关闭导航"
-      >
-        <span data-icon="close"></span>
-      </button>
-      <nav class="sidebar-nav" id="typeTabs">
-        <div class="nav-label">文档导航</div>
-        <a class="nav-item" href="/" id="publicHomeLink"><span data-icon="grid"></span><span>首页</span></a>
-        <a class="nav-item" href="/?view=resources" data-type="all"
-          ><span data-icon="grid"></span><span>全部资源</span
-          ><span class="nav-count" data-count="all">--</span></a
-        >
-        <a class="nav-item" href="/type/html" data-type="html"
-          ><span data-icon="document"></span><span>HTML文档</span
-          ><span class="nav-count" data-count="html">--</span></a
-        >
-        <a class="nav-item" href="/type/pdf" data-type="pdf"
-          ><span data-icon="document"></span><span>PDF文档</span
-          ><span class="nav-count" data-count="pdf">--</span></a
-        >
-        <a class="nav-item" href="/type/word" data-type="word"
-          ><span data-icon="document"></span><span>Word文档</span
-          ><span class="nav-count" data-count="word">--</span></a
-        >
-      </nav>
-      <footer class="sidebar-footer">
-        <a
-          class="nav-item"
-          href="https://github.com/yaojingang/liekan-docs"
-          target="_blank"
-          rel="noopener noreferrer"
-          ><span data-icon="external"></span>开源地址</a
-        >
-      </footer>
-      <div
-        class="sidebar-resizer"
-        id="sidebarResizer"
-        role="separator"
-        aria-label="调整侧栏宽度"
-        aria-orientation="vertical"
-        aria-valuemin="180"
-        aria-valuemax="320"
-        tabindex="0"
-      ></div>
-    </aside>
-    <button
-      class="sidebar-backdrop"
-      id="sidebarBackdrop"
-      aria-label="关闭导航"
-      hidden
-    ></button>
     <div class="shell-workspace">
       <header class="topbar">
-        <div class="topbar-title">
-          <button
-            class="btn icon-btn ghost"
-            id="sidebarToggle"
-            type="button"
-            aria-label="收起侧栏"
-            aria-controls="appSidebar"
-            aria-expanded="true"
-          >
-            <span data-icon="menu"></span>
-          </button>
-          <h1>资源中心</h1>
-        </div>
-        <div class="topbar-actions">
-          <span class="public-label">公开资源</span>
-        </div>
+        <a class="brand" href="/" id="publicHomeLink">
+          {{PUBLIC_BRAND_MARK}}
+          <div class="brand-copy"><h1 class="brand-title">{{SITE_NAME}}</h1>{{PUBLIC_BRAND_CAPTION}}</div>
+        </a>
+        <nav class="public-navigation" id="publicNavigation" aria-label="站点导航">
+          <div class="public-nav-links" id="publicNavLinks">
+            <!-- PUBLIC_NAVIGATION -->
+            <a class="public-menu-link" id="allDocumentsLink" data-nav-id="all-documents" href="/?view=resources">全部文档</a>
+            <!-- /PUBLIC_NAVIGATION -->
+          </div>
+          <details class="public-nav-more" id="publicNavMore" hidden>
+            <summary>更多<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></summary>
+            <div class="public-nav-overflow" id="publicNavOverflow"></div>
+          </details>
+        </nav>
       </header>
       <main class="content-scroll" id="mainContent">
         <section class="home-hero" id="homeHero" aria-labelledby="homeSearchTitle">
@@ -103,7 +41,7 @@
             <input id="homeSearchInput" type="search" name="q" aria-label="搜索公开文档" aria-describedby="homeSearchHint" placeholder="搜索文档标题、文件名或目录…" />
             <button class="btn primary" type="submit">搜索文档</button>
           </form>
-          <p class="home-search-hint" id="homeSearchHint">支持 HTML、PDF、Word · 也可通过左侧分类浏览</p>
+          <p class="home-search-hint" id="homeSearchHint">支持 HTML、PDF、Word · 点击下方统计卡片按类型浏览</p>
         </section>
         <div class="page-intro" id="listIntro" hidden>
           <p id="listNote">{{DESCRIPTION}}</p>
@@ -111,7 +49,7 @@
         <section class="resource-summary" aria-label="公开资源统计">
           <div class="stats-grid" id="statsLine">
             <a class="stat-card" href="/?view=resources" data-type="all"
-              ><span>全部资源</span><strong data-count="all">--</strong
+              ><span>全部文档</span><strong data-count="all">--</strong
               ><small>数量加载中</small></a
             >
             <a class="stat-card" href="/type/html" data-type="html"
@@ -127,7 +65,7 @@
               ><small>数量加载中</small></a
             >
           </div>
-          <p class="stats-note" id="statsNote">统计范围：全部公开资源</p>
+          <p class="stats-note" id="statsNote">统计范围：全部公开文档</p>
         </section>
         <p
           class="visually-hidden"
@@ -195,17 +133,18 @@
           ></nav>
         </section>
         <section class="home-guide" id="homeGuide" aria-label="文档阅读说明">
-          <div><span data-icon="folder"></span><div><h3>按类型，快速查找</h3><p>通过左侧分类或上方统计卡片，浏览不同格式的公开文档。</p></div></div>
+          <div><span data-icon="folder"></span><div><h3>按类型，快速查找</h3><p>点击上方统计卡片，浏览不同格式的公开文档。</p></div></div>
           <div><span data-icon="document"></span><div><h3>打开即读，保留原文排版</h3><p>点击文档行，在新标签页阅读；带锁标识的文档需要输入访问密码。</p></div></div>
         </section>
         <p class="table-caption" id="listCaption" hidden>
           按类型查找资源，保留每份文件原有的阅读排版。
         </p>
+        <footer class="public-footer"><a href="https://github.com/yaojingang/liekan-docs" target="_blank" rel="noopener noreferrer">开源地址<span data-icon="external" aria-hidden="true"></span></a></footer>
       </main>
     </div>
     <script
       type="module"
-      src="/assets/public-app.js?v=20261009-date1"
+      src="/assets/public-app.js?v=20261025-brand1"
     ></script>
   </body>
 </html>

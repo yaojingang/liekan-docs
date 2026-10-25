@@ -94,7 +94,9 @@ export class DocumentAccess {
     const key = digest(ip);
     const counts = this.db.prepare('SELECT COUNT(*) AS total, SUM(page_id=?) AS document, MIN(created_at) AS oldest FROM reader_attempts WHERE ip_hash=?').get(id, key);
     if (counts.total >= 60 || counts.document >= 10) throw Object.assign(accessError('验证次数较多，请稍后再试。',429), { retryAfter: Math.max(1, Math.ceil((counts.oldest + 300000 - now) / 1000)) });
-    this.db.prepare('INSERT INTO reader_attempts(ip_hash,page_id,created_at) VALUES(?,?,?)').run(key,id,now);
+    // Reserve before hashing so concurrent requests cannot bypass the limits.
+    const reservation = this.db.prepare('INSERT INTO reader_attempts(ip_hash,page_id,created_at) VALUES(?,?,?)').run(key,id,now);
+    return { rowid: reservation.lastInsertRowid, createdAt: now };
   }
   async unlock(page, request, reply) {
     let origin;
@@ -103,8 +105,10 @@ export class DocumentAccess {
     let row = this.row(page.id);
     if (!row || row.deleted_at || row.visibility === 'private') throw accessError('文档暂不可访问',404);
     if (!row.access_password_hash) return { ok: true };
-    this.attempt(request.ip, page.id);
+    const attempt = this.attempt(request.ip, page.id);
     if (!await this.verify(request.body?.password, row.access_password_hash)) throw accessError('密码不正确，请检查后重试。',401);
+    // Successful readers sharing an IP must not consume the failed-password budget.
+    this.db.prepare('DELETE FROM reader_attempts WHERE rowid=? AND created_at=?').run(attempt.rowid,attempt.createdAt);
     const current = this.row(page.id);
     if (!current || current.deleted_at || current.visibility === 'private' || current.access_version !== row.access_version || current.access_password_hash !== row.access_password_hash) throw accessError('访问权限已更新，请重新输入密码。',409);
     const remember = request.body?.remember !== false;

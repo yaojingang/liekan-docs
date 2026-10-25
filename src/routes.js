@@ -1,4 +1,5 @@
 import { cookies } from "./document-access.js";
+import { maxLogoBytes, readLogo, storeLogo } from "./brand.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { defaultAdminPath, normalizeAdminPath } from "./admin-path.js";
@@ -198,6 +199,7 @@ function requestAccessState(app, request) {
     return "public";
   if (request.method === "POST" && /^\/public\/api\/documents\/[a-z0-9]{6}\/unlock$/.test(pathname)) return "public";
   if (pathname.startsWith("/document-assets/")) return "public";
+  if (pathname.startsWith("/public/brand/")) return "public";
   if (isPublicListPath(pathname)) return "public";
   if (pathname === "/admin" || pathname === "/admin/")
     return usingDefaultAdminPath ? "public" : "not-found";
@@ -234,7 +236,6 @@ async function sendGeneratedPage(app, request, reply, rawSlug) {
       .replaceAll("{{SLUG}}", page.slug)
       .replaceAll("{{HOME_LINK}}", app.store.getPublicSettings().publicHomepageEnabled ? '<a class="btn" href="/">返回文档首页</a>' : ""));
   }
-  app.store.incrementAccessCount(page.id);
   if (request.query?.edit === "1" && page.fileType !== "html") {
     return reply
       .code(400)
@@ -242,6 +243,7 @@ async function sendGeneratedPage(app, request, reply, rawSlug) {
   }
   if (page.fileType !== "html") {
     const buffer = await app.store.readPageFile(page);
+    if (request.method === "GET") app.store.incrementAccessCount(page.id);
     return reply
       .header("cache-control", "no-store")
       .header(
@@ -262,6 +264,7 @@ async function sendGeneratedPage(app, request, reply, rawSlug) {
           app.store.getSettings().adminName,
         )
       : html;
+  if (request.method === "GET" && request.query?.edit !== "1") app.store.incrementAccessCount(page.id);
   return reply
     .header("cache-control", "no-store")
     .type("text/html; charset=utf-8")
@@ -319,8 +322,16 @@ async function sendPublicIndex(app, reply) {
         `${metaTag("description", seoDescription)}${metaTag("keywords", seoKeywords)}  </head>`,
     )
     .replaceAll("{{SITE_NAME}}", () => escapeHtml(siteName))
+    .replace("{{PUBLIC_BRAND_MARK}}", () => settings.publicLogoUrl
+      ? `<span class="brand-mark has-image"><img class="brand-image" id="publicLogoImage" src="${escapeHtml(settings.publicLogoUrl)}" alt="" /><span class="brand-symbol" data-icon="document" hidden></span></span>`
+      : '<span class="brand-mark"><span class="brand-symbol" data-icon="document" aria-hidden="true"></span></span>')
+    .replace("{{PUBLIC_BRAND_CAPTION}}", () => settings.publicBrandCaption
+      ? `<span class="brand-caption">${escapeHtml(settings.publicBrandCaption)}</span>` : "")
     .replaceAll("{{DESCRIPTION}}", () =>
       escapeHtml(seoDescription || "按类型筛选、搜索并打开公开文档。"),
+    )
+    .replace(/<!-- PUBLIC_NAVIGATION -->[\s\S]*?<!-- \/PUBLIC_NAVIGATION -->/, () =>
+      settings.publicNavigation.map(item => `<a class="public-menu-link"${item.id === "all-documents" ? ' id="allDocumentsLink"' : ""} data-nav-id="${escapeHtml(item.id)}" href="${escapeHtml(item.url)}"${item.newTab ? ' target="_blank" rel="noopener noreferrer"' : ""}>${escapeHtml(item.label)}</a>`).join("\n"),
     );
   return reply.type("text/html").send(html);
 }
@@ -333,6 +344,19 @@ function normalizedPublicType(value) {
 }
 
 function registerApiRoutes(app, prefix = "") {
+  app.post(`${prefix}/api/brand/logo`, async (request, reply) => {
+    try {
+      let bytes;
+      for await (const part of request.parts({ limits: { fileSize: maxLogoBytes, files: 1, fields: 0 } })) bytes = await part.toBuffer();
+      if (!bytes) return reply.code(400).send({ error: "请选择 LOGO 图片" });
+      return { url: await storeLogo(app.config, bytes) };
+    } catch (error) {
+      if (error.code === "BRAND_INVALID") return reply.code(error.statusCode || 400).send({ error: error.message, field: "publicLogoUrlInput" });
+      if (error.code === "FST_REQ_FILE_TOO_LARGE") return reply.code(413).send({ error: "LOGO 图片最大为 2 MiB" });
+      if (["FST_FILES_LIMIT", "FST_FIELDS_LIMIT", "FST_INVALID_MULTIPART_CONTENT_TYPE"].includes(error.code)) return reply.code(400).send({ error: "每次请选择一张 LOGO 图片" });
+      throw error;
+    }
+  });
   app.get(`${prefix}/api/health`, async () => ({
     ok: true,
     name: "liekan-docs",
@@ -373,6 +397,16 @@ function registerApiRoutes(app, prefix = "") {
       pagination: result.pagination,
       ...app.store.managementSummary(request.query || {}),
     };
+  });
+
+  app.get(`${prefix}/api/analytics`, async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    return { ...app.store.analytics.report(request.query || {}), documentStats: app.store.managementSummary().stats };
+  });
+
+  app.get(`${prefix}/api/analytics/rankings`, async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    return { ...app.store.analytics.rankingDetails(request.query || {}), documentStats: app.store.managementSummary().stats };
   });
 
   app.get(`${prefix}/api/pages/:id`, async (request, reply) => {
@@ -449,7 +483,25 @@ function registerApiRoutes(app, prefix = "") {
     },
   }));
 
-  app.patch(`${prefix}/api/settings`, async (request, reply) => {
+  app.patch(`${prefix}/api/settings`, { schema: { body: {
+    type: "object",
+    properties: {
+      publicLogoUrl: { type: "string", maxLength: 2048 },
+      publicBrandCaption: { type: "string", maxLength: 80 },
+      publicNavigation: {
+      type: "array", minItems: 1, maxItems: 10,
+      items: {
+        type: "object", required: ["id", "label", "url", "newTab", "enabled"],
+        properties: {
+          id: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,64}$" },
+          label: { type: "string", minLength: 1, maxLength: 20 },
+          url: { type: "string", minLength: 1, maxLength: 2048 },
+          newTab: { type: "boolean" }, enabled: { type: "boolean" },
+        },
+        additionalProperties: false,
+      },
+    } },
+  } } }, async (request, reply) => {
     const body = request.body || {};
     if (Object.hasOwn(body, "adminPath")) {
       let nextAdminPath;
@@ -474,6 +526,8 @@ function registerApiRoutes(app, prefix = "") {
     try {
       settings = await app.store.saveSettings(body);
     } catch (error) {
+      if (["NAVIGATION_INVALID", "BRAND_INVALID"].includes(error.code))
+        return reply.code(400).send({ error: error.message, field: error.field });
       if (String(error.code || "").startsWith("ADMIN_PATH_"))
         return reply.code(400).send({ error: error.message });
       throw error;
@@ -711,6 +765,16 @@ export function registerRoutes(app) {
   });
 
   app.get("/", async (request, reply) => sendPublicIndex(app, reply));
+  app.get("/public/brand/:fileName", async (request, reply) => {
+    try {
+      const logo = await readLogo(app.config, request.params.fileName);
+      if (!logo) return sendNotFound(reply);
+      return reply.type(logo.type).header("x-content-type-options", "nosniff").header("cache-control", "public, max-age=31536000, immutable").send(logo.bytes);
+    } catch (error) {
+      request.log.error(error);
+      return reply.code(500).send({ error: "LOGO 暂不可用" });
+    }
+  });
   app.get("/healthz", async () => ({
     ok: true,
     name: "liekan-docs",

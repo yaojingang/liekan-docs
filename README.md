@@ -6,13 +6,14 @@
 
 ## 功能
 
-- **文档首页**：居中搜索、分类导航、公开资源统计和最近更新的 6 份文档。
+- **文档首页**：顶部 LOGO 与导航、居中搜索、可点击分类的公开文档统计和最近更新的 6 份文档。
 - **资源列表**：按名称或文件名搜索，支持分类、排序和分页；显示资源名称、更新日期、类型、操作，日期格式为 `YYYY-MM-DD`，整行可点击阅读。
 - **上传工作区**：上传单个或多个文件，或导入含图片、CSS、JS 的目录；在当前页的居中宽屏弹窗内核对信息、设置权限并确认入库，完成后可直接打开文档或继续上传。单个文件最大 20 MiB。
 - **HTML 编辑**：在原文页面内编辑、自动保存、记录版本并恢复历史内容。
 - **PDF 和 Word 阅读**：PDF 直接打开阅读器，Word 先转换为 PDF；这两类文档不提供 HTML 在线编辑和版本恢复。
 - **访问控制**：首页可见、仅链接可见、私有三种访问方式，公开文档可另设阅读密码。
 - **后台管理**：目录监听、回收站与恢复、站点与 SEO 设置、统计代码、自定义后台地址，以及 HTML 向同类服务同步。
+- **数据分析**：后台首页展示今日与累计浏览量；左侧“数据分析”提供近 7、30、90 天浏览趋势、每日明细、累计与今日 Top 10、类型分布及核心指标。两个排行均提供独立的完整明细页，每页 20 条，显示精确次数并支持分页。
 
 ## Docker 启动
 
@@ -73,6 +74,10 @@ TOKDOC_INITIAL_USERNAME=admin TOKDOC_INITIAL_PASSWORD='replace-with-a-long-passw
 
 “系统设置”使用顶部 Tab 分组，保存按钮会保存各分组的当前设置。目录添加、扫描和移除独立执行，移除监听不会删除已经生成的文档。
 
+“系统设置 → 前台导航”支持添加、编辑、停用、删除自定义菜单，通过上移、下移调整顺序，并预览启用菜单的排列。菜单支持站内路径、HTTP/HTTPS 外部链接及新标签页打开，包含内置“全部文档”在内最多 10 项。保存后刷新前台生效；内置入口保持显示并可排序，打开时清除关键词和分类。电脑端空间不足或使用手机时，其余菜单按配置顺序收进右上角“更多”。“站点信息与 SEO”可修改 LOGO 文字、副标题和图片；支持上传 PNG、JPG、WebP（最大 2 MiB）或填写图片地址，提供即时预览和恢复默认图标，保存后刷新前台生效。副标题留空可隐藏。
+
+浏览量（PV）按成功打开文档的 GET 阅读请求累计，刷新和重复阅读会计数；编辑模式、密码验证页、HEAD、附件和失败请求排除。每日统计按浏览器时区划分，开始记录前的日期显示“未记录”，历史累计浏览次数继续保留。日均按所选时段内已记录的自然日计算，开始记录当天为部分时段。统计包含私有、仅链接及回收站文档的历史阅读，文档移入回收站后仍保留次数。不采集访客身份或 IP，不提供访客人数（UV）。
+
 ## 访问方式与阅读密码
 
 | 访问方式 | 首页、搜索和统计 | 短链接访问 |
@@ -95,6 +100,7 @@ HTML、PDF、Word、原始文件和附件都检查文档权限。共享附件的
 
 ```text
 data/tokdoc.db        数据库；已有 tokhtml.db 时可继续使用旧库
+data/brand/         上传的 LOGO 图片
 data/uploads/       原文件和目录附件
 data/pages/         生成的 HTML、PDF 或 Word 阅读版本
 data/versions/      HTML 版本快照
@@ -130,6 +136,7 @@ GitHub Actions 会在推送 `main` 或提交 Pull Request 时运行 Node.js 22 �
 | 访问设置 | `PATCH /admin/api/pages/:id/access`、`POST /admin/api/pages/:id/access/revoke` |
 | 编辑与版本 | `PATCH /admin/api/pages/:id/content`、`GET /admin/api/pages/:id/versions` |
 | 设置与目录 | `/admin/api/settings`、`/admin/api/watch-dirs` |
+| 浏览分析 | `GET /admin/api/analytics?days=30&timeZone=Asia%2FShanghai`；完整排行使用 `GET /admin/api/analytics/rankings?mode=total&page=1&timeZone=Asia%2FShanghai`，`mode` 支持 `total`、`today` |
 | 公开列表 | `GET /public/api/pages` |
 | 阅读 | `GET /:slug`、`GET /:slug?edit=1` |
 

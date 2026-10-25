@@ -102,5 +102,15 @@ export function createDb(config) {
   `);
   db.exec('CREATE INDEX IF NOT EXISTS idx_pages_deleted_at ON pages(deleted_at);');
   db.exec('CREATE INDEX IF NOT EXISTS idx_pages_visibility ON pages(visibility);');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS page_views (
+      page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      viewed_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_page_views_time_page ON page_views(viewed_at, page_id);
+  `);
+  const startedAt = new Date().toISOString();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES ('analytics_started_at', ?, ?)")
+    .run(startedAt, startedAt);
   return db;
 }

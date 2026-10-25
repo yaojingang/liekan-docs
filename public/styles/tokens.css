@@ -21,6 +21,9 @@
   --sidebar-offset: var(--sidebar-width);
   --topbar-height: 60px;
   --content-width: 1200px;
+  --public-logo-size: 32px;
+  --public-brand-size: 16px;
+  --public-caption-size: 9px;
   --radius-panel: 14px;
   --radius-menu: 9px;
   --radius-input: 8px;
