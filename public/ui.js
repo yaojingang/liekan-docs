@@ -11,6 +11,7 @@ export const escapeHtml = (value) =>
       })[c],
   );
 const paths = {
+  chart: '<path d="M4 3v17h17M8 15l4-5 4 2 5-7"/>',
   lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
   document:

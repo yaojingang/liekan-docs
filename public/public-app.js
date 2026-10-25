@@ -3,12 +3,12 @@ import {
   icon,
   formatSize,
   paginationHtml,
-  initShell,
+  hydrateIcons,
 } from "./ui.js?v=202610091";
 
 const $ = (selector) => document.querySelector(selector);
 const labels = {
-  all: "全部资源",
+  all: "全部文档",
   html: "HTML文档",
   pdf: "PDF文档",
   word: "Word文档",
@@ -24,9 +24,9 @@ const integer = new Intl.NumberFormat("zh-CN");
 let serial = 0,
   timer;
 
-function readUrl() {
-  const params = new URLSearchParams(location.search);
-  const match = location.pathname.match(/^\/type\/(html|pdf|word)\/?$/i);
+function readUrl(url = location) {
+  const params = new URLSearchParams(url.search);
+  const match = url.pathname.match(/^\/type\/(html|pdf|word)\/?$/i);
   const page = Number(params.get("page"));
   return {
     view: match || params.get("view") === "resources" || ["q", "sort", "page"].some(key => params.has(key)) ? "resources" : "home",
@@ -67,7 +67,7 @@ function metricCount(count) {
 }
 function renderNavigation() {
   document
-    .querySelectorAll("#typeTabs [data-type], #statsLine [data-type]")
+    .querySelectorAll("#statsLine [data-type]")
     .forEach((link) => {
       const type = link.dataset.type;
       const selected = state.view === "resources" && type === state.type;
@@ -99,8 +99,17 @@ function renderNavigation() {
     });
   $("#statsNote").textContent =
     state.phase === "error" && state.stats
-      ? "统计范围：全部公开资源 · 统计为上次成功加载结果"
-      : "统计范围：全部公开资源";
+      ? "统计范围：全部公开文档 · 统计为上次成功加载结果"
+      : "统计范围：全部公开文档";
+  document.querySelectorAll(".public-menu-link").forEach(link => {
+    const url = new URL(link.getAttribute("href"), location.href);
+    const active = link.id === "allDocumentsLink"
+      ? state.view === "resources" && state.type === "all"
+      : url.origin === location.origin && (url.pathname === "/" || /^\/type\/(html|pdf|word)\/?$/i.test(url.pathname)) && urlFor(readUrl(url)) === urlFor(state);
+    link.classList.toggle("is-active", active);
+    if (active) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
 }
 function renderControls() {
   const home = state.view === "home";
@@ -275,11 +284,64 @@ function onCategoryClick(event) {
   return link.id === "homeViewAll" ? clear() : selectCategory(link.dataset.type);
 }
 
-initShell("public");
+hydrateIcons();
+const logoImage = $("#publicLogoImage");
+if (logoImage) {
+  const showDefaultLogo = () => {
+    logoImage.hidden = true;
+    logoImage.parentElement.classList.remove("has-image");
+    logoImage.parentElement.querySelector(".brand-symbol").hidden = false;
+  };
+  logoImage.addEventListener("error", showDefaultLogo);
+  if (logoImage.complete && !logoImage.naturalWidth) showDefaultLogo();
+}
+const navigation = $("#publicNavigation");
+const navigationLinks = [...navigation.querySelectorAll(".public-menu-link")];
+function fitNavigation() {
+  if (!navigation.clientWidth) return;
+  const main = $("#publicNavLinks"), more = $("#publicNavMore"), overflow = $("#publicNavOverflow");
+  const focused = document.activeElement;
+  for (const link of navigationLinks) main.append(link);
+  more.hidden = true;
+  const compact = window.innerWidth <= 800;
+  if (main.scrollWidth <= navigation.clientWidth && !compact) {
+    more.open = false;
+  } else if (navigationLinks.length > 1) {
+    more.hidden = false;
+    const widths = new Map(navigationLinks.map(link => [link, link.getBoundingClientRect().width + 4]));
+    const all = $("#allDocumentsLink");
+    let available = navigation.clientWidth - more.getBoundingClientRect().width - 8 - widths.get(all);
+    let overflowed = compact;
+    for (const link of navigationLinks) {
+      if (link === all) continue;
+      if (overflowed || widths.get(link) > available) {
+        overflowed = true;
+        overflow.append(link);
+      } else available -= widths.get(link);
+    }
+  }
+  if (focused?.classList.contains("public-menu-link")) {
+    if (overflow.contains(focused) && !more.open) more.querySelector("summary").focus({ preventScroll: true });
+    else focused.focus({ preventScroll: true });
+  } else if (more.contains(focused)) {
+    (more.hidden ? $("#allDocumentsLink") : focused).focus({ preventScroll: true });
+  }
+}
+if (typeof ResizeObserver !== "undefined") new ResizeObserver(fitNavigation).observe(navigation);
+window.addEventListener("resize", fitNavigation);
+fitNavigation();
+document.addEventListener("click", event => {
+  const more = $("#publicNavMore");
+  if (!more.contains(event.target)) more.open = false;
+});
+$("#publicNavMore").onkeydown = event => {
+  if (event.key !== "Escape") return;
+  event.preventDefault();
+  $("#publicNavMore").open = false;
+  $("#publicNavMore summary").focus();
+};
 $("#searchInput").value = state.q;
-$("#typeTabs").onclick = (event) => {
-  const home = event.target.closest("#publicHomeLink");
-  if (!home) return onCategoryClick(event);
+$("#publicHomeLink").onclick = (event) => {
   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
   event.preventDefault();
   cancelSearch();
@@ -288,6 +350,12 @@ $("#typeTabs").onclick = (event) => {
   $("#searchInput").value = "";
   $("#mainContent").scrollTop = 0;
   return load(true);
+};
+$("#allDocumentsLink").onclick = (event) => {
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+  event.preventDefault();
+  $("#mainContent").scrollTop = 0;
+  return clear();
 };
 $("#homeViewAll").onclick = onCategoryClick;
 $("#homeSearchInput").oninput = renderNavigation;

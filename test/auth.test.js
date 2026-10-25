@@ -339,14 +339,14 @@ test("serves a public document index and filters public API fields without login
 
   const publicHome = await app.inject({ method: "GET", url: "/" });
   assert.equal(publicHome.statusCode, 200);
-  assert.match(publicHome.body, /id="typeTabs"/);
+  assert.match(publicHome.body, /id="publicNavigation"/);
   assert.match(publicHome.body, /\/assets\/public-app\.js/);
 
   for (const type of ["html", "pdf", "word"]) {
     const typePage = await app.inject({ method: "GET", url: `/type/${type}` });
     assert.equal(typePage.statusCode, 200);
     assert.match(typePage.body, /猎看文档系统/);
-    assert.match(typePage.body, /<h1>资源中心<\/h1>/);
+    assert.match(typePage.body, /id="allDocumentsLink"/);
     assert.match(typePage.body, /aria-label="公开资源统计"/);
   }
   const unknownType = await app.inject({ method: "GET", url: "/type/unknown" });
@@ -822,11 +822,79 @@ test("saves display names and injects public homepage SEO settings", async (t) =
     document.querySelector(".brand-title").textContent.trim(),
     "移山公开资料库",
   );
-  assert.equal(document.querySelector("h1").textContent.trim(), "资源中心");
+  assert.equal(document.querySelector("h1").textContent.trim(), "移山公开资料库");
   assert.equal(
     document.querySelector("#listNote").textContent.trim(),
     "面向公开阅读的资料索引。",
   );
+});
+
+test("navigation settings persist ordered menus and render safe enabled links on every public view", async t => {
+  const { app, dataDir } = await createApp();
+  t.after(async () => { await app.close(); await fs.rm(dataDir, { recursive: true, force: true }); });
+  const cookie = `tokdoc_session=${app.store.createSessionToken("admin")}`;
+  const all = app.store.getSettings().publicNavigation[0];
+  assert.equal(all.label, "全部文档");
+  assert.equal(all.url, "/?view=resources");
+  const navigation = [
+    { id: "guide", label: '<b> $& "指南"', url: "https://example.com/guide?a=1&b=2", newTab: true, enabled: true },
+    all,
+    { id: "hidden", label: "停用菜单", url: "/hidden", newTab: false, enabled: false },
+    { id: "pdf", label: "PDF文档", url: "/type/pdf", newTab: false, enabled: true },
+  ];
+  const denied = await app.inject({ method: "PATCH", url: "/admin/api/settings", payload: { publicNavigation: navigation } });
+  assert.equal(denied.statusCode, 401);
+  const saved = await app.inject({ method: "PATCH", url: "/admin/api/settings", headers: { cookie }, payload: { publicNavigation: navigation } });
+  assert.equal(saved.statusCode, 200);
+  assert.deepEqual(saved.json().settings.publicNavigation, navigation);
+  const loaded = await app.inject({ url: "/admin/api/settings", headers: { cookie } });
+  assert.deepEqual(loaded.json().settings.publicNavigation, navigation);
+  for (const url of ["/", "/?view=resources", "/type/html", "/type/pdf", "/type/word"]) {
+    const page = await app.inject({ url });
+    const { document } = parseHTML(page.body);
+    const links = [...document.querySelectorAll("#publicNavigation .public-menu-link")];
+    assert.deepEqual(links.map(link => link.dataset.navId), ["guide", "all-documents", "pdf"], url);
+    assert.equal(links[0].textContent, navigation[0].label);
+    assert.equal(links[0].querySelector("b"), null);
+    assert.equal(links[0].getAttribute("href"), navigation[0].url);
+    assert.equal(links[0].target, "_blank");
+    assert.equal(links[0].getAttribute("rel"), "noopener noreferrer");
+    assert.equal(links[1].getAttribute("target"), null);
+    assert.equal(document.querySelector(".shell-sidebar, #sidebarToggle"), null);
+  }
+  const session = await app.inject({ url: "/admin/api/session" });
+  assert.deepEqual(session.json().publicSettings.publicNavigation.map(item => item.id), ["guide", "all-documents", "pdf"]);
+  const { createDb } = await import("../src/db.js");
+  const reopened = createDb(app.config);
+  try {
+    assert.deepEqual(JSON.parse(reopened.prepare("SELECT value FROM settings WHERE key = 'public_navigation'").get().value), navigation);
+  } finally { reopened.close(); }
+});
+
+test("invalid navigation cannot replace saved menus or partially save other settings", async t => {
+  const { app, dataDir } = await createApp();
+  t.after(async () => { await app.close(); await fs.rm(dataDir, { recursive: true, force: true }); });
+  const cookie = `tokdoc_session=${app.store.createSessionToken("admin")}`;
+  const initial = app.store.getSettings(), all = initial.publicNavigation[0];
+  const custom = { id: "custom", label: "指南", url: "/type/html", newTab: false, enabled: true };
+  const invalid = [
+    [], [custom], [all, all], [{ ...all, enabled: false }], [{ ...all, newTab: true }], [{ ...all, url: "/" }],
+    [all, { ...custom, label: " " }], [all, { ...custom, label: "文".repeat(21) }],
+    [all, { ...custom, id: "bad\"id" }],
+    [all, ...Array.from({ length: 10 }, (_, index) => ({ ...custom, id: `m${index}` }))],
+    ...["javascript:alert(1)", "data:text/html,test", "//example.com", "/\\example.com", "https://", "https://user:pass@example.com", "https://example.com\n/path"].map(url => [all, { ...custom, url }]),
+  ];
+  for (const publicNavigation of invalid) {
+    const result = await app.inject({ method: "PATCH", url: "/admin/api/settings", headers: { cookie }, payload: { publicNavigation, siteName: "不可部分保存" } });
+    assert.equal(result.statusCode, 400, JSON.stringify(publicNavigation));
+    assert.deepEqual(app.store.getSettings().publicNavigation, initial.publicNavigation);
+    assert.equal(app.store.getSettings().siteName, initial.siteName);
+  }
+  await app.store.saveSettings({ publicNavigation: [all, { ...custom, label: " 指南 ", url: " /type/html " }] });
+  assert.equal(app.store.getSettings().publicNavigation[1].label, "指南");
+  assert.equal(app.store.getSettings().publicNavigation[1].url, "/type/html");
+  await app.store.saveSettings({ publicSeoTitle: "只保存 SEO" });
+  assert.equal(app.store.getSettings().publicNavigation.length, 2);
 });
 
 test("keeps management summaries and runtime private while validating date ranges", async (t) => {
@@ -977,7 +1045,7 @@ test("escapes branding and SEO while preserving literal replacement characters",
   });
   const root = await app.inject({ url: "/" });
   const { document } = parseHTML(root.body);
-  assert.equal(document.querySelector("h1").textContent, "资源中心");
+  assert.equal(document.querySelector("h1").textContent, name);
   assert.equal(document.querySelector(".brand-title").textContent, name);
   assert.equal(document.querySelector("title").textContent, name);
   assert.equal(

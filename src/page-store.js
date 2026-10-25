@@ -1,4 +1,6 @@
 import { DocumentAccess } from "./document-access.js";
+import { PageAnalytics } from "./analytics.js";
+import { defaultBrandCaption, isPublicUrl, validateBrandSettings } from "./brand.js";
 import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
@@ -257,6 +259,37 @@ const defaultPublicSeoDescription =
   "公开文档索引，集中阅读 HTML、PDF 与 Word 文档。";
 const defaultPublicSeoKeywords = "猎看文档系统,文档索引,HTML,PDF,Word";
 
+function defaultPublicNavigation() {
+  return [{ id: "all-documents", label: "全部文档", url: "/?view=resources", newTab: false, enabled: true }];
+}
+
+function validatePublicNavigation(value) {
+  const fail = (message, field = "navigationSettings") => {
+    throw Object.assign(new Error(message), { code: "NAVIGATION_INVALID", field });
+  };
+  if (!Array.isArray(value) || value.length < 1 || value.length > 10)
+    fail("前台菜单需要保留全部文档，最多设置 10 项");
+  const ids = new Set();
+  const result = value.map(item => {
+    if (!item || typeof item !== "object" || typeof item.id !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(item.id) || ids.has(item.id))
+      fail("前台菜单标识无效或重复");
+    ids.add(item.id);
+    const label = typeof item.label === "string" ? item.label.trim() : "";
+    if (!label || [...label].length > 20)
+      fail("菜单名称需填写 1 至 20 个字符", `navigationLabel-${item.id}`);
+    const url = typeof item.url === "string" ? item.url.trim() : "";
+    if (!isPublicUrl(url))
+      fail("菜单链接需填写站内路径或 HTTP/HTTPS 地址", `navigationUrl-${item.id}`);
+    if (typeof item.newTab !== "boolean" || typeof item.enabled !== "boolean")
+      fail("菜单打开方式和显示状态无效");
+    if (item.id === "all-documents" && (label !== "全部文档" || url !== "/?view=resources" || !item.enabled || item.newTab))
+      fail("全部文档为内置菜单，请保留默认名称、地址和显示状态");
+    return { id: item.id, label, url, newTab: item.newTab, enabled: item.enabled };
+  });
+  if (!ids.has("all-documents")) fail("请保留全部文档菜单");
+  return result;
+}
+
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString("base64url");
   const hash = crypto
@@ -291,6 +324,7 @@ export class PageStore {
     this.config = config;
     this.db = db;
     this.access = new DocumentAccess(this);
+    this.analytics = new PageAnalytics(db);
     this.writingPages = new Set();
   }
 
@@ -490,6 +524,7 @@ export class PageStore {
       .map((row) => ({ name: row.name, count: row.count }));
     return {
       stats: {
+        ...this.analytics.summary(start, end),
         all: totals.all_count,
         editable: totals.html_count,
         todayCreated: totals.today_count,
@@ -1174,6 +1209,9 @@ export class PageStore {
       publicSeoDescription: defaultPublicSeoDescription,
       publicSeoKeywords: defaultPublicSeoKeywords,
       publicHomepageEnabled: true,
+      publicNavigation: defaultPublicNavigation(),
+      publicLogoUrl: "",
+      publicBrandCaption: defaultBrandCaption,
       remoteSyncEnabled: false,
       remoteSyncUrl: "",
       remoteSyncHasToken: false,
@@ -1194,6 +1232,12 @@ export class PageStore {
         settings.publicSeoKeywords = row.value || defaultPublicSeoKeywords;
       if (row.key === "public_homepage_enabled")
         settings.publicHomepageEnabled = row.value !== "0";
+      if (row.key === "public_navigation") {
+        try { settings.publicNavigation = validatePublicNavigation(JSON.parse(row.value)); }
+        catch { settings.publicNavigation = defaultPublicNavigation(); }
+      }
+      if (row.key === "public_logo_url") settings.publicLogoUrl = isPublicUrl(row.value) ? row.value : "";
+      if (row.key === "public_brand_caption") settings.publicBrandCaption = row.value;
       if (row.key === "remote_sync_enabled")
         settings.remoteSyncEnabled = row.value === "1";
       if (row.key === "remote_sync_url")
@@ -1213,6 +1257,9 @@ export class PageStore {
       publicSeoDescription: settings.publicSeoDescription,
       publicSeoKeywords: settings.publicSeoKeywords,
       publicHomepageEnabled: settings.publicHomepageEnabled,
+      publicNavigation: settings.publicNavigation.filter(item => item.enabled),
+      publicLogoUrl: settings.publicLogoUrl,
+      publicBrandCaption: settings.publicBrandCaption,
     };
   }
 
@@ -1224,6 +1271,9 @@ export class PageStore {
   }
 
   async saveSettings(settings = {}) {
+    const brand = validateBrandSettings(settings);
+    const navigation = Object.hasOwn(settings, "publicNavigation")
+      ? validatePublicNavigation(settings.publicNavigation) : null;
     const now = nowIso();
     this.ensureAuthSettings();
     if (Object.prototype.hasOwnProperty.call(settings, "trackingCode")) {
@@ -1315,6 +1365,9 @@ export class PageStore {
       const token = String(settings.remoteSyncToken || "").trim();
       if (token) this.setSetting("remote_sync_token", token, now);
     }
+    if (navigation) this.setSetting("public_navigation", JSON.stringify(navigation), now);
+    if (Object.hasOwn(brand, "publicLogoUrl")) this.setSetting("public_logo_url", brand.publicLogoUrl, now);
+    if (Object.hasOwn(brand, "publicBrandCaption")) this.setSetting("public_brand_caption", brand.publicBrandCaption, now);
     return this.getSettings();
   }
 
@@ -1411,9 +1464,7 @@ export class PageStore {
   }
 
   incrementAccessCount(id) {
-    this.db
-      .prepare("UPDATE pages SET access_count = access_count + 1 WHERE id = ?")
-      .run(id);
+    this.analytics.record(id);
     return this.getPage(id);
   }
 

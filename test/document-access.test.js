@@ -136,6 +136,90 @@ test('same-origin validation and persisted attempt limits apply before hashing',
   assert.ok(app.store.db.prepare('SELECT COUNT(*) AS n FROM reader_attempts').get().n > 0);
 });
 
+test('correct passwords remain reusable by readers sharing an IP after password changes', async t => {
+  const { app, create, access, unlock } = await fixture(t);
+  const page = await create();
+  const readers = Array(12).fill('');
+  for (let round = 1; round <= 3; round++) {
+    const password = `shared-password-${round}`;
+    assert.equal((await access(page, { passwordAction: 'set', password })).statusCode, 200);
+    for (let reader = 0; reader < readers.length; reader++) {
+      const locked = await app.inject({ url: page.url, headers: { cookie: readers[reader] } });
+      assert.match(locked.body, /这份文档需要访问密码/);
+      const deviceCookie = cookieOf(locked) || readers[reader];
+      const result = await unlock(page, password, deviceCookie, reader % 2 === 0);
+      assert.equal(result.statusCode, 200, `round ${round}, reader ${reader + 1}: ${result.body}`);
+      readers[reader] = cookieOf(result);
+      for (let visit = 0; visit < 3; visit++) {
+        const read = await app.inject({ url: page.url, headers: { cookie: readers[reader] } });
+        assert.equal(read.statusCode, 200);
+        assert.match(read.body, /SECRET BODY/);
+      }
+    }
+  }
+  assert.equal(app.store.db.prepare('SELECT COUNT(*) AS n FROM reader_attempts').get().n, 0);
+});
+
+test('successful unlocks across documents do not exhaust the shared IP limit', async t => {
+  const { app, create, access, unlock } = await fixture(t);
+  let cookie = '';
+  for (let document = 0; document < 7; document++) {
+    const page = await create(`document-${document}.html`);
+    await access(page, { passwordAction: 'set', password: 'shared-password' });
+    for (let visit = 0; visit < 9; visit++) {
+      const result = await unlock(page, 'shared-password', cookie);
+      assert.equal(result.statusCode, 200, `document ${document}, visit ${visit}: ${result.body}`);
+      cookie = cookieOf(result);
+    }
+    assert.match((await app.inject({ url: page.url, headers: { cookie } })).body, /SECRET BODY/);
+  }
+  assert.equal(app.store.db.prepare('SELECT COUNT(*) AS n FROM reader_attempts').get().n, 0);
+});
+
+test('successful verification removes only its own attempt and preserves failed-password limits', async t => {
+  const { app, create, access, unlock } = await fixture(t);
+  const page = await create();
+  await access(page, { passwordAction: 'set', password: 'shared-password' });
+  for (let i = 0; i < 8; i++) assert.equal((await unlock(page, 'wrong-password')).statusCode, 401);
+  for (let i = 0; i < 12; i++) assert.equal((await unlock(page, 'shared-password')).statusCode, 200);
+  assert.equal(app.store.db.prepare('SELECT COUNT(*) AS n FROM reader_attempts').get().n, 8);
+  for (let i = 0; i < 2; i++) assert.equal((await unlock(page, 'wrong-password')).statusCode, 401);
+  assert.equal((await unlock(page, 'shared-password')).statusCode, 429);
+  assert.equal(app.store.db.prepare('SELECT COUNT(*) AS n FROM reader_attempts').get().n, 10);
+  app.store.db.prepare('UPDATE reader_attempts SET created_at=?').run(Date.now() - 300001);
+  assert.equal((await unlock(page, 'shared-password')).statusCode, 200);
+  assert.equal(app.store.db.prepare('SELECT COUNT(*) AS n FROM reader_attempts').get().n, 0);
+});
+
+test('in-flight verification reserves attempts and releases successful reservations', async t => {
+  const { app, create, access, unlock } = await fixture(t);
+  const page = await create();
+  await access(page, { passwordAction: 'set', password: 'shared-password' });
+  const verify = app.store.access.verify.bind(app.store.access);
+  let entered = 0, release, reached;
+  const barrier = new Promise(resolve => { release = resolve; });
+  const reserved = new Promise(resolve => { reached = resolve; });
+  app.store.access.verify = async (...args) => {
+    if (++entered === 10) reached();
+    await barrier;
+    return verify(...args);
+  };
+  const pending = Array.from({ length: 10 }, () => unlock(page, 'shared-password'));
+  try {
+    await reserved;
+    assert.equal(app.store.db.prepare('SELECT COUNT(*) AS n FROM reader_attempts').get().n, 10);
+    assert.equal((await unlock(page, 'shared-password')).statusCode, 429);
+    assert.equal(entered, 10);
+  } finally {
+    release();
+    await Promise.all(pending);
+    app.store.access.verify = verify;
+  }
+  for (const result of await Promise.all(pending)) assert.equal(result.statusCode, 200);
+  assert.equal(app.store.db.prepare('SELECT COUNT(*) AS n FROM reader_attempts').get().n, 0);
+  assert.equal((await unlock(page, 'shared-password')).statusCode, 200);
+});
+
 test('managed sources have exact owners and conflicting shared assets reject protection', async t => {
   const { app, config, access, unlock } = await fixture(t);
   const [a,b] = await app.store.importUploadFiles([

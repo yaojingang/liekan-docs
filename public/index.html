@@ -4,9 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>猎看文档系统</title>
-    <link rel="stylesheet" href="/assets/styles/tokens.css?v=20261009" />
+    <link rel="stylesheet" href="/assets/styles/tokens.css?v=20261025-brand1" />
     <link rel="stylesheet" href="/assets/styles/components.css?v=20261009" />
-    <link rel="stylesheet" href="/assets/styles/admin.css?v=20261018-upload1" />
+    <link rel="stylesheet" href="/assets/styles/admin.css?v=20261026-ranking-details1" />
   </head>
   <body class="lkdoc admin-page" data-auth="loading">
     <div class="boot-screen" id="bootScreen" role="status">正在加载工作台…</div>
@@ -53,6 +53,8 @@
           ><span data-icon="trash"></span><span>回收站</span
           ><span class="nav-count" data-count="trash">0</span></a
         >
+        <div class="nav-label">数据概览</div>
+        <a class="nav-item" href="/admin?view=analytics" data-nav-type="analytics"><span data-icon="chart"></span><span>数据分析</span></a>
       </nav>
       <footer class="sidebar-footer">
         <a class="nav-item" href="/admin/settings" id="openSettings"
@@ -134,7 +136,7 @@
       </header>
       <main class="content-scroll" id="mainContent">
         <div class="notice" id="globalError" role="alert" hidden></div>
-        <div class="stats-grid" aria-label="文档统计">
+        <div class="stats-grid admin-stats" id="workspaceStats" aria-label="文档与浏览统计">
             <article class="stat-card">
               <span>文档总量</span><strong id="metricTotal">0</strong
               ><small>当前有效文档</small>
@@ -151,7 +153,59 @@
               <span>监听目录</span><strong id="metricWatch">0</strong
               ><small>事件监听 + 手动重扫</small>
             </article>
+            <article class="stat-card">
+              <span>今日浏览量</span><strong id="metricTodayViews">-</strong><small>成功阅读 · 本地日期</small>
+            </article>
+            <article class="stat-card">
+              <span>累计浏览量</span><strong id="metricTotalViews">-</strong><small>含历史浏览记录</small>
+            </article>
           </div>
+        <section id="analyticsView" hidden aria-labelledby="analyticsTitle">
+          <div class="analytics-toolbar">
+            <div><h2 id="analyticsTitle">浏览概览</h2><p class="hint" id="analyticsUpdated">按本地日期统计文档阅读情况</p></div>
+            <div class="analytics-controls">
+              <label class="sr-only" for="analyticsRange">趋势统计范围</label>
+              <select id="analyticsRange"><option value="7">近 7 天</option><option value="30" selected>近 30 天</option><option value="90">近 90 天</option></select>
+              <button class="btn" id="refreshAnalytics" type="button"><span data-icon="refresh"></span>刷新数据</button>
+            </div>
+          </div>
+          <div class="notice" id="analyticsError" role="alert" hidden></div>
+          <p class="hint analytics-status" id="analyticsStatus" role="status" aria-live="polite"></p>
+          <div id="analyticsContent" aria-busy="false">
+            <div class="stats-grid admin-stats" aria-label="核心浏览指标">
+              <article class="stat-card"><span>今日浏览量</span><strong id="analyticsToday">-</strong><small id="analyticsComparison">与昨日比较</small></article>
+              <article class="stat-card"><span>累计浏览量</span><strong id="analyticsTotal">-</strong><small>含历史浏览记录</small></article>
+              <article class="stat-card"><span id="analyticsPeriodLabel">近 30 天浏览量</span><strong id="analyticsPeriod">-</strong><small>所选时段累计阅读</small></article>
+              <article class="stat-card"><span>日均浏览量</span><strong id="analyticsAverage">-</strong><small>按时段内已记录天数计算</small></article>
+              <article class="stat-card"><span>被浏览文档</span><strong id="analyticsDocuments">-</strong><small>所选时段去重文档数</small></article>
+              <article class="stat-card"><span>昨日浏览量</span><strong id="analyticsYesterday">-</strong><small id="analyticsYesterdayNote">上一个完整自然日</small></article>
+            </div>
+            <section class="panel analytics-trend" aria-labelledby="analyticsTrendTitle">
+              <div class="panel-heading"><h2 id="analyticsTrendTitle">浏览趋势</h2><span class="hint"><span class="chart-key"></span>浏览量（PV）</span></div>
+              <div class="analytics-chart" id="analyticsChart"></div>
+              <details class="analytics-daily"><summary>查看每日数据</summary><div class="table-scroll"><table class="analytics-table"><caption class="sr-only">每日浏览量与被浏览文档数</caption><thead><tr><th scope="col">日期</th><th scope="col" class="number">浏览量</th><th scope="col" class="number">被浏览文档</th></tr></thead><tbody id="analyticsDailyRows"></tbody></table></div></details>
+            </section>
+            <div class="analytics-rankings">
+              <section class="panel" aria-labelledby="totalRankingTitle"><div class="panel-heading"><h2 id="totalRankingTitle">累计浏览排行</h2><span class="hint">Top 10 · 浏览量降序</span></div><div id="totalRanking"></div><footer class="analytics-ranking-footer"><a class="btn" id="totalRankingDetailsLink" aria-label="查看累计浏览全部明细" href="/admin?view=analytics-details&amp;ranking=total">查看全部明细</a></footer></section>
+              <section class="panel" aria-labelledby="todayRankingTitle"><div class="panel-heading"><h2 id="todayRankingTitle">今日浏览排行</h2><span class="hint"><span id="todayRankingDate">本地今日</span> · Top 10</span></div><div id="todayRanking"></div><footer class="analytics-ranking-footer"><a class="btn" id="todayRankingDetailsLink" aria-label="查看今日浏览全部明细" href="/admin?view=analytics-details&amp;ranking=today">查看全部明细</a></footer></section>
+            </div>
+            <section class="panel analytics-types" aria-labelledby="analyticsTypesTitle"><div class="panel-heading"><h2 id="analyticsTypesTitle">文档类型分布</h2><span class="hint">所选时段浏览量</span></div><div id="analyticsTypes"></div></section>
+            <p class="hint analytics-method" id="analyticsMethod">浏览量按成功打开文档的 GET 阅读请求统计，刷新和重复阅读会累计；编辑、验证页、附件及失败请求不计入。</p>
+          </div>
+        </section>
+        <section id="analyticsDetailsView" class="analytics-details" hidden aria-labelledby="rankingDetailsTitle">
+          <div class="analytics-toolbar">
+            <a class="btn" id="rankingDetailsBack" href="/admin?view=analytics"><span data-icon="back"></span>返回数据分析</a>
+            <button class="btn" id="refreshRankingDetails" type="button"><span data-icon="refresh"></span>刷新数据</button>
+          </div>
+          <div class="notice" id="rankingDetailsError" role="alert" hidden></div>
+          <p class="hint analytics-status" id="rankingDetailsStatus" role="status" aria-live="polite"></p>
+          <section class="panel" id="rankingDetailsContent" aria-busy="false">
+            <div class="panel-heading ranking-details-heading"><div><h2 id="rankingDetailsTitle" tabindex="-1">浏览明细</h2><p class="hint" id="rankingDetailsDescription"></p></div><span class="hint" id="rankingDetailsCount"></span></div>
+            <div id="rankingDetailsTable"></div>
+            <div class="pagination" id="rankingDetailsPager"></div>
+          </section>
+        </section>
         <section id="uploadView" hidden aria-labelledby="uploadEntryTitle">
           <section
             class="panel upload-entry"
@@ -265,6 +319,7 @@
             >
             <div class="settings-tabs" role="tablist" aria-label="设置分组">
               <button type="button" role="tab" id="siteSettingsTab" aria-controls="siteSettings" aria-selected="true" tabindex="0">站点信息与 SEO</button>
+              <button type="button" role="tab" id="navigationSettingsTab" aria-controls="navigationSettings" aria-selected="false" tabindex="-1">前台导航</button>
               <button type="button" role="tab" id="directorySettingsTab" aria-controls="directorySettings" aria-selected="false" tabindex="-1">目录监听</button>
               <button type="button" role="tab" id="editSettingsTab" aria-controls="editSettings" aria-selected="false" tabindex="-1">编辑与版本</button>
               <button type="button" role="tab" id="trackingSettingsTab" aria-controls="trackingSettings" aria-selected="false" tabindex="-1">统计代码</button>
@@ -284,7 +339,7 @@
                 <span class="hint">设置公开门户和管理工作台的名称。</span>
                 <div class="form-grid">
                   <label class="field" for="siteNameInput"
-                    ><span>前台网站名称</span
+                    ><span>前台网站名称 / LOGO 文字</span
                     ><input
                       id="siteNameInput"
                       type="text"
@@ -305,7 +360,13 @@
                       data-error-for="adminNameInput"
                       hidden
                     ></small></label
-                  ><label class="checkbox-field full"
+                  ><label class="field full" for="publicBrandCaptionInput"><span>LOGO 副标题</span><input id="publicBrandCaptionInput" type="text" maxlength="80" placeholder="DOCUMENT WORKSPACE" /><small class="hint">可修改为品牌说明，留空隐藏副标题。</small><small class="field-error" data-error-for="publicBrandCaptionInput" hidden></small></label>
+                  <div class="field full"><label for="publicLogoUrlInput">LOGO 图片</label><input id="publicLogoUrlInput" type="text" maxlength="2048" placeholder="上传图片，或填写 https://… 图片地址" /><small class="field-error" data-error-for="publicLogoUrlInput" hidden></small>
+                    <div class="brand-upload-actions"><button class="btn" id="uploadBrandLogo" type="button">上传 LOGO</button><button class="btn ghost" id="resetBrandLogo" type="button">恢复默认图标</button><input id="brandLogoFile" type="file" accept="image/png,image/jpeg,image/webp" hidden /></div>
+                    <small class="hint" id="brandLogoStatus" role="status" aria-live="polite">支持 PNG、JPG、WebP，最大 2 MiB。上传后保存设置生效。</small>
+                  </div>
+                  <div class="site-brand-preview full" aria-label="前台 LOGO 预览"><span class="brand-mark" id="brandPreviewMark"><img id="brandPreviewImage" alt="" hidden /><span id="brandPreviewSymbol" aria-hidden="true"></span></span><div class="brand-copy"><strong class="brand-title" id="brandPreviewTitle"></strong><span class="brand-caption" id="brandPreviewCaption"></span></div><span class="hint">前台预览</span></div>
+                  <label class="checkbox-field full"
                     ><input
                       id="publicHomepageEnabledInput"
                       type="checkbox"
@@ -338,6 +399,26 @@
                     ></small
                   ></label>
                 </div>
+              </section>
+              <section
+                class="panel settings-section"
+                id="navigationSettings"
+                role="tabpanel"
+                aria-labelledby="navigationSettingsTab"
+                tabindex="-1"
+                hidden
+              >
+                <h2>前台导航</h2>
+                <p class="hint">设置前台右上角的一级菜单，最多 10 项。列表从上到下对应前台从左到右，保存设置后生效。</p>
+                <div class="navigation-preview" aria-label="导航顺序预览">
+                  <strong id="navigationPreviewBrand">猎看文档系统</strong>
+                  <div id="navigationPreviewLinks"></div>
+                </div>
+                <div class="navigation-editor-heading"><h3>菜单列表 <span class="hint" id="navigationCount"></span></h3><button class="btn" id="addNavigationItem" type="button">添加菜单</button></div>
+                <p class="field-error" data-error-for="navigationSettings" id="navigationError" role="alert" hidden></p>
+                <ol class="navigation-editor" id="navigationItems"></ol>
+                <p class="hint">“全部文档”为内置入口，保持显示并支持排序。窄屏保留该入口，其余菜单收进“更多”。</p>
+                <p class="sr-only" id="navigationStatus" role="status" aria-live="polite"></p>
               </section>
               <section
                 class="panel settings-section"
@@ -794,6 +875,6 @@
       </div>
     </dialog>
     <div class="toast" id="toast" role="status" hidden></div>
-    <script type="module" src="/assets/app.js?v=20261018-upload1"></script>
+    <script type="module" src="/assets/app.js?v=20261026-ranking-details1"></script>
   </body>
 </html>

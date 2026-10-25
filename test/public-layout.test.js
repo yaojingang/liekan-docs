@@ -48,7 +48,7 @@ function deferred() {
   });
   return { promise, resolve, reject };
 }
-async function harness(fetchImpl = async () => response(result()), url = "/?view=resources") {
+async function harness(fetchImpl = async () => response(result()), url = "/?view=resources", layout) {
   const { document, window } = parseHTML(
     await fs.readFile("public/index-public.html", "utf8"),
   );
@@ -80,6 +80,20 @@ async function harness(fetchImpl = async () => response(result()), url = "/?view
       );
     },
   });
+  if (layout) {
+    const main = document.querySelector("#publicNavLinks");
+    const guide = document.createElement("a");
+    guide.className = "public-menu-link";
+    guide.dataset.navId = "guide";
+    guide.href = layout.guideUrl || "/type/html";
+    guide.textContent = "使用指南";
+    main.prepend(guide);
+    Object.defineProperty(window, "innerWidth", { configurable: true, get: () => layout.viewportWidth });
+    Object.defineProperty(document.querySelector("#publicNavigation"), "clientWidth", { get: () => layout.width });
+    Object.defineProperty(main, "scrollWidth", { get: () => main.children.length * 80 });
+    for (const link of main.children) link.getBoundingClientRect = () => ({ width: 80 });
+    document.querySelector("#publicNavMore").getBoundingClientRect = () => ({ width: 64 });
+  }
   const addEventListener = window.addEventListener.bind(window);
   window.addEventListener = (name, callback) => {
     listeners.set(name, callback);
@@ -144,7 +158,7 @@ async function harness(fetchImpl = async () => response(result()), url = "/?view
       ...options,
     };
     const parent = target.closest(
-      "#typeTabs, #statsLine, #pagination, #emptyState, #homeViewAll",
+      "#publicHomeLink, #allDocumentsLink, #statsLine, #pagination, #emptyState, #homeViewAll",
     );
     assert.ok(
       parent?.onclick,
@@ -161,6 +175,10 @@ async function harness(fetchImpl = async () => response(result()), url = "/?view
     location,
     timers,
     click,
+    resize(viewportWidth, width) {
+      Object.assign(layout, { viewportWidth, width });
+      listeners.get("resize")();
+    },
     async input(value) {
       const el = document.querySelector("#searchInput");
       el.focus();
@@ -188,8 +206,8 @@ test("public first load selects its deep-link category without presenting unknow
     "/type/pdf?q=年度&sort=created_desc&page=3",
   );
   assert.equal(
-    h.document.querySelector('#typeTabs [aria-current="page"]').dataset.type,
-    "pdf",
+    h.document.querySelector(".shell-sidebar"),
+    null,
   );
   assert.equal(
     h.document.querySelector('#statsLine [aria-current="page"]').dataset.type,
@@ -223,8 +241,8 @@ test("public resource cards share category state and preserve stable focused nod
   assert.equal(h.document.querySelector('#statsLine [data-type="pdf"]'), card);
   assert.equal(h.document.activeElement, card);
   assert.equal(
-    h.document.querySelector('#typeTabs [aria-current="page"]').dataset.type,
-    "pdf",
+    h.document.querySelector(".shell-sidebar"),
+    null,
   );
   assert.equal(
     h.document.querySelector('#statsLine [data-count="all"]').textContent,
@@ -284,7 +302,7 @@ test("public loading and failure keep current controls while excluding stale row
     ++request === 1 ? response(result()) : pending.promise,
   );
   await flush();
-  h.click('#typeTabs [data-type="word"]');
+  h.click('#statsLine [data-type="word"]');
   assert.equal(
     h.document.querySelector("#publicListTitle").textContent,
     "Word文档",
@@ -321,7 +339,7 @@ test("public stale success and stale errors cannot overwrite the current categor
         ? old.promise
         : response(result([resource("PDF 当前资源", "pdf")])),
     );
-    h.click('#typeTabs [data-type="pdf"]');
+    h.click('#statsLine [data-type="pdf"]');
     await flush();
     if (rejected) old.reject(new Error("旧错误"));
     else old.resolve(response(result([resource("旧 HTML 资源")])));
@@ -433,8 +451,8 @@ test("public counts compact large metrics with complete visible values and handl
     /123,456,789/,
   );
   assert.equal(
-    h.document.querySelector('#typeTabs [data-count="all"]').textContent,
-    "123,456,789",
+    h.document.querySelector("#allDocumentsLink").textContent,
+    "全部文档",
   );
   assert.equal(
     h.document.querySelector('#statsLine [data-count="pdf"]').textContent,
@@ -474,7 +492,7 @@ test("public loading announces progress outside the busy results panel", async (
   );
   assert.equal(status.getAttribute("role"), "status");
   assert.equal(status.getAttribute("aria-live"), "polite");
-  assert.match(status.textContent, /正在加载全部资源/);
+  assert.match(status.textContent, /正在加载全部文档/);
   assert.ok(
     !status.closest('[aria-busy="true"]'),
     "loading announcements must remain outside busy ancestors",
@@ -656,7 +674,7 @@ test("home category links use draft keywords while view-all opens the complete r
   const input = h.document.querySelector("#homeSearchInput");
   input.value = "项目资料";
   input.oninput();
-  const link = h.document.querySelector('#typeTabs [data-type="html"]');
+  const link = h.document.querySelector('#statsLine [data-type="html"]');
   assert.equal(new URL(link.getAttribute("href"), h.location).searchParams.get("q"), "项目资料");
   const native = h.click(link, { ctrlKey: true });
   assert.equal(native.prevented, undefined);
@@ -719,4 +737,58 @@ test("an empty home search opens the complete list with a refreshable URL", asyn
   assert.equal(h.document.querySelector("#homeHero").hidden, true);
   assert.equal(new URL(h.calls.at(-1), h.location).searchParams.get("pageSize"), "10");
   assert.equal(new URL(h.calls.at(-1), h.location).searchParams.get("q"), "");
+});
+
+test("top all-documents link clears drafts, sort and paging and preserves native modified clicks", async () => {
+  const h = await harness(undefined, "/type/pdf?q=old&sort=created_desc&page=2");
+  await flush();
+  assert.equal(h.document.querySelector(".shell-sidebar, #sidebarToggle, #sidebarResizer"), null);
+  assert.equal(h.document.querySelector("#publicHomeLink").getAttribute("href"), "/");
+  const native = h.click("#allDocumentsLink", { ctrlKey: true });
+  assert.equal(native.prevented, undefined);
+  const before = h.calls.length;
+  await h.input("尚未搜索");
+  h.click("#allDocumentsLink");
+  await flush();
+  await h.tick();
+  assert.equal(h.calls.length, before + 1);
+  assert.equal(h.location.pathname + h.location.search, "/?view=resources");
+  assert.equal(h.document.querySelector("#searchInput").value, "");
+  assert.equal(h.document.querySelector("#sortSelect").value, "updated_desc");
+  assert.equal(h.document.querySelector("#allDocumentsLink").getAttribute("aria-current"), "page");
+});
+
+test("responsive navigation retains keyboard focus when more or its links move between layouts", async () => {
+  const h = await harness(undefined, "/", { viewportWidth: 375, width: 160 });
+  await flush();
+  const more = h.document.querySelector("#publicNavMore");
+  const summary = more.querySelector("summary");
+  const guide = h.document.querySelector('[data-nav-id="guide"]');
+  assert.equal(guide.parentElement.id, "publicNavOverflow");
+  summary.focus();
+  h.resize(1440, 800);
+  assert.equal(more.hidden, true);
+  assert.equal(h.document.activeElement.id, "allDocumentsLink");
+  h.resize(375, 160);
+  more.open = true;
+  guide.focus();
+  h.resize(1440, 800);
+  assert.equal(guide.parentElement.id, "publicNavLinks");
+  assert.equal(h.document.activeElement, guide);
+  h.resize(375, 160);
+  assert.equal(more.hidden, false);
+  assert.equal(h.document.activeElement, summary);
+});
+
+test("custom navigation compares canonical page state across query order, encoding and defaults", async () => {
+  for (const [menu, current, selected] of [
+    ["/?view=resources&q=团队 资料&sort=updated_desc&page=1", "/?q=团队+资料&view=resources", true],
+    ["/type/html/?sort=updated_desc&q=团队", "/type/html?q=%E5%9B%A2%E9%98%9F", true],
+    ["https://elsewhere.test/?view=resources&q=团队", "/?q=团队&view=resources", false],
+    ["/unrelated-document", "/", false],
+  ]) {
+    const h = await harness(undefined, current, { viewportWidth: 1440, width: 800, guideUrl: menu });
+    await flush();
+    assert.equal(h.document.querySelector('[data-nav-id="guide"]').getAttribute("aria-current"), selected ? "page" : null, menu);
+  }
 });

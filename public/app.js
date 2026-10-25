@@ -11,10 +11,11 @@ import {
   confirmAction,
   openMenu,
   notice,
-} from "./ui.js?v=202610091";
+} from "./ui.js?v=202610251";
 const $ = (selector) => document.querySelector(selector);
 const labels = {
   upload: "上传文档",
+  analytics: "数据分析",
   all: "全部文档",
   other: "其它文档",
   html: "HTML文档",
@@ -42,6 +43,8 @@ let filters = readFilters(),
 let metadataReady = false,
   settingsEditSerial = 0,
   addingSamples = false;
+let navigationDraft = [], navigationSerial = 0;
+let logoUploading = false, logoUploadSerial = 0;
 let previewPage = null,
   previewSerial = 0,
   listScroll = 0,
@@ -56,10 +59,13 @@ let stagedUpload = null,
   cancelling = false,
   uploadUnknown = false;
 const busyPages = new Set();
+let analyticsData = null, analyticsChartWidth = 0;
 function readFilters() {
   const p = new URLSearchParams(location.search);
   return {
-    view: p.get("view") === "documents" || [...p.keys()].some(key => ["q", "type", "scope", "status", "directory", "directoryEmpty", "visibility", "accessMode", "password", "sort", "page", "preview"].includes(key)) ? "documents" : "upload",
+    view: ["analytics", "analytics-details"].includes(p.get("view")) ? p.get("view") : p.get("view") === "documents" || [...p.keys()].some(key => ["q", "type", "scope", "status", "directory", "directoryEmpty", "visibility", "accessMode", "password", "sort", "page", "preview"].includes(key)) ? "documents" : "upload",
+    analyticsDays: [7, 30, 90].includes(Number(p.get("days"))) ? Number(p.get("days")) : 30,
+    ranking: p.get("ranking") === "today" ? "today" : "total",
     q: (p.get("q") || "").trim(),
     type: ["html", "pdf", "word", "other"].includes(p.get("type"))
       ? p.get("type")
@@ -84,6 +90,15 @@ function readFilters() {
 }
 function queryString() {
   const p = new URLSearchParams();
+  if (["analytics", "analytics-details"].includes(filters.view)) {
+    p.set("view", filters.view);
+    if (filters.analyticsDays !== 30) p.set("days", String(filters.analyticsDays));
+    if (filters.view === "analytics-details") {
+      p.set("ranking", filters.ranking);
+      if (filters.page > 1) p.set("page", String(filters.page));
+    }
+    return p;
+  }
   for (const key of [
     "view",
     "q",
@@ -147,7 +162,7 @@ async function api(path, options = {}) {
       showLogin("登录已失效，请重新登录。");
     throw Object.assign(
       new Error(data.error || `请求失败：${response.status}`),
-      { status: response.status },
+      { status: response.status, field: data.field },
     );
   }
   return data;
@@ -164,9 +179,14 @@ function showError(error) {
 function showLogin(message = "") {
   $("#accessPassword").value = ""; accessPage = null;
   sessionEpoch++;
+  logoUploadSerial++;
+  logoUploading = false;
   session = false;
   metadataReady = false;
   requestSerial++;
+  analyticsData = null;
+  $("#analyticsContent").hidden = true;
+  $("#rankingDetailsContent").hidden = true;
   historySerial++;
   previewSerial++;
   document.querySelectorAll("dialog[open]").forEach((dialog) => dialog.close());
@@ -196,13 +216,23 @@ function shell() {
   $("#openSettings").classList.toggle("is-active", isSettingsPage);
   $("#authUserLabel").textContent = settings.authUsername || "管理员";
   const uploading = !isSettingsPage && filters.view === "upload" && !previewPage;
-  $("#managerActions").hidden = isSettingsPage || uploading;
+  const analyzing = !isSettingsPage && filters.view === "analytics" && !previewPage;
+  const rankingDetails = !isSettingsPage && filters.view === "analytics-details" && !previewPage;
+  $("#managerActions").hidden = isSettingsPage || uploading || analyzing || rankingDetails;
   $("#settingsActions").hidden = !isSettingsPage;
   $("#settingsPage").hidden = !isSettingsPage;
-  $("#managerView").hidden = isSettingsPage || uploading || Boolean(previewPage);
+  $("#managerView").hidden = isSettingsPage || uploading || analyzing || rankingDetails || Boolean(previewPage);
   $("#uploadView").hidden = !uploading;
+  $("#analyticsView").hidden = !analyzing;
+  $("#analyticsDetailsView").hidden = !rankingDetails;
+  $("#workspaceStats").hidden = analyzing || rankingDetails;
+  const rankingTitle = filters.ranking === "today" ? "今日浏览明细" : "累计浏览明细";
+  $("#rankingDetailsTitle").textContent = rankingTitle;
+  const overviewQuery = `view=analytics${filters.analyticsDays !== 30 ? "&days=" + filters.analyticsDays : ""}`;
+  $("#rankingDetailsBack").href = `${adminBase}?${overviewQuery}`;
+  for (const mode of ["total", "today"]) $("#" + mode + "RankingDetailsLink").href = `${adminBase}?${overviewQuery.replace("view=analytics", "view=analytics-details")}&ranking=${mode}`;
   $("#uploadListLink").href = `${adminBase}?view=documents`;
-  const title = isSettingsPage ? "系统设置" : uploading ? "上传文档" : "文档管理";
+  const title = isSettingsPage ? "系统设置" : rankingDetails ? rankingTitle : analyzing ? "数据分析" : uploading ? "上传文档" : "文档管理";
   $("#workspaceTitle").textContent = title;
   document.title = `${name} · ${title}`;
   const home = $("#openPublicHome");
@@ -215,11 +245,11 @@ function shell() {
   else home.href = "/";
   document.querySelectorAll("[data-nav-type]").forEach((el) => {
     const type = el.dataset.navType;
-    el.href = `${adminBase}${type === "upload" ? "" : type === "all" ? "?view=documents" : type === "trash" ? "?scope=trash" : "?type=" + type}`;
+    el.href = `${adminBase}${type === "upload" ? "" : type === "analytics" ? "?view=analytics" : type === "all" ? "?view=documents" : type === "trash" ? "?scope=trash" : "?type=" + type}`;
     el.classList.toggle(
       "is-active",
       !isSettingsPage &&
-        (uploading ? type === "upload" : filters.scope === "trash" ? type === "trash" : type === filters.type),
+        (analyzing || rankingDetails ? type === "analytics" : uploading ? type === "upload" : filters.scope === "trash" ? type === "trash" : type === filters.type),
     );
     if (el.classList.contains("is-active")) el.setAttribute("aria-current", "page");
     else el.removeAttribute("aria-current");
@@ -279,6 +309,10 @@ function renderStats() {
     ["metricWatch", "watchDirs"],
   ])
     $("#" + id).textContent = Number(stats[key]) || 0;
+  for (const [id, key] of [["metricTodayViews", "todayViews"], ["metricTotalViews", "totalViews"]]) {
+    $("#" + id).textContent = stats[key] == null ? "-" : compactCount(stats[key]);
+    $("#" + id).title = stats[key] == null ? "尚未加载" : countText(stats[key]);
+  }
   $("#metricToday").title =
     "当前有效文档在本地今日入库的数量；删除后不计入，恢复后按原入库时间计入。";
   document.querySelectorAll("[data-count]").forEach((el) => {
@@ -290,6 +324,145 @@ function renderStats() {
           ? stats.trash || 0
           : stats.byType?.[type] || 0;
   });
+}
+function countText(value) { return Number(value).toLocaleString("zh-CN", { maximumFractionDigits: 1 }); }
+function compactCount(value) {
+  const n = Number(value) || 0;
+  return n >= 1e8 ? `${countText(Math.round(n / 1e7) / 10)}亿` : n >= 1e4 ? `${countText(Math.round(n / 1e3) / 10)}万` : countText(n);
+}
+function renderAnalyticsChart(data) {
+  const chart = $("#analyticsChart"), padding = getComputedStyle(chart);
+  analyticsChartWidth = chart.clientWidth;
+  const width = Math.max(260, chart.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight) || 800), height = 240;
+  const left = 44, right = width - 16, top = 16, bottom = 208;
+  const maximum = Math.max(1, ...data.trend.map(day => day.views || 0));
+  const magnitude = 10 ** Math.floor(Math.log10(maximum / 4));
+  const step = Math.max(1, Math.ceil(maximum / 4 / magnitude) * magnitude), ceiling = step * 4;
+  const x = i => left + i * (right - left) / Math.max(1, data.trend.length - 1);
+  const y = n => bottom - n / ceiling * (bottom - top);
+  const grid = Array.from({ length: 5 }, (_, i) => `<line x1="${left}" y1="${y(i * step)}" x2="${right}" y2="${y(i * step)}" class="chart-grid"/><text x="${left - 10}" y="${y(i * step) + 4}" text-anchor="end">${compactCount(i * step)}</text>`).join("");
+  const labelStep = Math.ceil((data.trend.length - 1) / (width < 500 ? 3 : 6));
+  const dates = data.trend.map((day, i) => i % labelStep === 0 || i === data.trend.length - 1 ? `<text x="${x(i)}" y="234" text-anchor="${i === 0 ? "start" : i === data.trend.length - 1 ? "end" : "middle"}">${day.date.slice(5).replace("-", "/")}</text>` : "").join("");
+  const points = data.trend.flatMap((day, i) => day.views === null ? [] : [{ ...day, x: x(i), y: y(day.views) }]);
+  const line = points.map((p, i) => `${i ? "L" : "M"}${p.x},${p.y}`).join(" ");
+  const area = points.length ? `${line} L${points.at(-1).x},${bottom} L${points[0].x},${bottom} Z` : "";
+  $("#analyticsChart").innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="trendChartTitle trendChartDescription"><title id="trendChartTitle">近 ${data.days} 天浏览趋势</title><desc id="trendChartDescription">共 ${countText(data.summary.periodViews)} 次浏览，按日展示，详细数值可展开下方每日数据。</desc>${grid}${dates}<path d="${area}" class="chart-area"/><path d="${line}" class="chart-line"/>${points.map(p => `<circle cx="${p.x}" cy="${p.y}" r="${points.length > 31 ? 2 : 3}" class="chart-dot"><title>${p.date}：${countText(p.views)} 次浏览，${p.documents} 份文档</title></circle>`).join("")}</svg>${data.summary.periodViews ? "" : '<p class="chart-empty">所选时段暂无浏览记录</p>'}`;
+}
+function rankingTableHtml(mode, ranked, precise = false) {
+  const prefix = mode === "total" ? "累计" : "今日";
+  return ranked.length
+    ? `<div class="table-scroll"><table class="analytics-table ranking-table"><caption class="sr-only">${prefix}文档浏览量降序排列</caption><thead><tr><th scope="col" class="rank-number">排名</th><th scope="col">文档</th><th scope="col" class="number">浏览量</th></tr></thead><tbody>${ranked.map(row => `<tr><td class="rank-number"><span class="${row.rank <= 3 ? "rank-leading" : ""}">${row.rank}</span></td><td><div class="ranking-name">${row.deleted ? `<span>${esc(row.title)}</span>` : `<a href="${esc(row.url)}" target="_blank" rel="noopener noreferrer">${esc(row.title)}</a>`}<small>${esc(labels[row.fileType] || "其它文档")}${row.deleted ? " · 已移入回收站" : ""}</small></div></td><td class="number" title="${countText(row.views)}" aria-label="${countText(row.views)} 次浏览">${precise ? countText(row.views) : compactCount(row.views)}</td></tr>`).join("")}</tbody></table></div>`
+    : `<div class="analytics-empty">${prefix}暂无文档浏览记录</div>`;
+}
+function renderAnalyticsRanking(mode, data) {
+  $("#" + mode + "Ranking").innerHTML = rankingTableHtml(mode, data.pages.slice(0, 10));
+}
+function renderAnalytics(data) {
+  const s = data.summary;
+  for (const [id, key] of [["Today", "todayViews"], ["Total", "totalViews"], ["Period", "periodViews"], ["Average", "dailyAverage"], ["Documents", "periodDocuments"], ["Yesterday", "yesterdayViews"]]) {
+    const el = $("#analytics" + id);
+    el.textContent = id === "Yesterday" && !s.yesterdayAvailable ? "-" : compactCount(s[key]);
+    el.title = id === "Yesterday" && !s.yesterdayAvailable ? "昨日尚未开始记录" : countText(s[key]);
+  }
+  $("#analyticsPeriodLabel").textContent = `近 ${data.days} 天浏览量`;
+  $("#analyticsYesterdayNote").textContent = !s.yesterdayAvailable ? "昨日尚未开始记录" : s.yesterdayComplete ? "上一个完整自然日" : "昨日仅记录部分时段";
+  $("#analyticsComparison").textContent = !s.yesterdayAvailable ? "昨日尚未开始记录" : !s.yesterdayComplete ? "昨日不完整，暂不比较" : s.yesterdayViews
+    ? s.todayViews === s.yesterdayViews ? "与昨日持平" : `较昨日${s.todayViews > s.yesterdayViews ? "增加" : "减少"} ${countText(Math.abs((s.todayViews - s.yesterdayViews) / s.yesterdayViews * 100))}%`
+    : s.todayViews ? `较昨日增加 ${countText(s.todayViews)} 次` : "与昨日持平";
+  $("#analyticsUpdated").textContent = `${data.timeZone} · 更新于 ${new Date(data.generatedAt).toLocaleTimeString("zh-CN", { hour12: false })}`;
+  $("#todayRankingDate").textContent = data.today;
+  renderAnalyticsChart(data);
+  $("#analyticsDailyRows").innerHTML = data.trend.map(day => `<tr><td>${day.date}</td><td class="number">${day.views === null ? "未记录" : countText(day.views)}</td><td class="number">${day.documents === null ? "未记录" : countText(day.documents)}</td></tr>`).join("");
+  for (const mode of ["total", "today"]) renderAnalyticsRanking(mode, data.rankings[mode]);
+  $("#analyticsTypes").innerHTML = Object.entries(data.byType).map(([type, views]) => {
+    const share = s.periodViews ? views / s.periodViews * 100 : 0;
+    return `<div class="analytics-type"><span>${esc(labels[type])}</span><div class="type-track"><span style="width:${share}%"></span></div><strong title="${countText(views)}">${compactCount(views)}</strong><small>${countText(Math.round(share * 10) / 10)}%</small></div>`;
+  }).join("");
+  const began = new Date(data.trackingStartedAt).toLocaleString("zh-CN", { timeZone: data.timeZone, hour12: false });
+  $("#analyticsMethod").textContent = `浏览量（PV）按成功打开文档的 GET 阅读请求统计，刷新和重复阅读会累计；编辑、密码验证页、附件及失败请求不计入。每日统计自 ${began} 开始，首日按实际记录时段统计，历史累计次数保留，每日明细无法回补。统计包含私有、仅链接及回收站文档的历史阅读；访客人数未采集。`;
+}
+async function loadAnalytics() {
+  if (!session) return;
+  const serial = ++requestSerial;
+  const focused = document.activeElement;
+  const ownsRecoveryFocus = focused === $("#refreshAnalytics") || (focused && $("#analyticsError").contains(focused));
+  shell();
+  $("#analyticsRange").value = String(filters.analyticsDays);
+  $("#analyticsStatus").textContent = "正在加载浏览数据…";
+  $("#analyticsError").hidden = true;
+  $("#analyticsContent").hidden = true;
+  $("#analyticsContent").setAttribute("aria-busy", "true");
+  $("#refreshAnalytics").disabled = true;
+  const params = new URLSearchParams({ days: filters.analyticsDays, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+  try {
+    const data = await api(`/api/analytics?${params}`);
+    if (serial !== requestSerial || !session || filters.view !== "analytics") return;
+    analyticsData = data;
+    stats = data.documentStats;
+    renderStats();
+    $("#globalError").hidden = true;
+    writeUrl();
+    $("#analyticsContent").hidden = false;
+    renderAnalytics(data);
+    $("#analyticsStatus").textContent = data.summary.periodViews ? `已加载近 ${data.days} 天数据` : "";
+    return true;
+  } catch (error) {
+    if (serial !== requestSerial || !session) return;
+    $("#analyticsStatus").textContent = "浏览数据加载失败";
+    notice($("#analyticsError"), error.message || "浏览数据加载失败", "重试");
+    return false;
+  } finally {
+    if (serial === requestSerial) {
+      $("#analyticsContent").setAttribute("aria-busy", "false");
+      $("#refreshAnalytics").disabled = false;
+      if (ownsRecoveryFocus && session && !$("#analyticsView").hidden && document.activeElement === document.body) {
+        ($("#analyticsError").hidden ? $("#refreshAnalytics") : $("#analyticsError [data-retry]"))?.focus();
+      }
+    }
+  }
+}
+async function loadRankingDetails() {
+  if (!session) return;
+  const serial = ++requestSerial;
+  const focused = document.activeElement;
+  const ownsRecoveryFocus = focused === $("#refreshRankingDetails") || (focused && $("#rankingDetailsError").contains(focused));
+  shell();
+  $("#rankingDetailsStatus").textContent = `正在加载${filters.ranking === "today" ? "今日" : "累计"}浏览明细…`;
+  $("#rankingDetailsError").hidden = true;
+  $("#rankingDetailsContent").hidden = true;
+  $("#rankingDetailsContent").setAttribute("aria-busy", "true");
+  $("#refreshRankingDetails").disabled = true;
+  const params = new URLSearchParams({ mode: filters.ranking, page: filters.page, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+  try {
+    const data = await api(`/api/analytics/rankings?${params}`);
+    if (serial !== requestSerial || !session || filters.view !== "analytics-details") return;
+    stats = data.documentStats;
+    renderStats();
+    $("#globalError").hidden = true;
+    filters.page = data.pagination.page;
+    writeUrl();
+    $("#rankingDetailsDescription").textContent = `${data.mode === "today" ? data.today + " · " : ""}${data.timeZone} · 按浏览量降序排列`;
+    $("#rankingDetailsCount").textContent = `共 ${countText(data.pagination.total)} 份文档 · ${countText(data.views)} 次浏览`;
+    $("#rankingDetailsTable").innerHTML = rankingTableHtml(data.mode, data.pages, true);
+    $("#rankingDetailsPager").innerHTML = paginationHtml(data.pagination);
+    $("#rankingDetailsPager").hidden = data.pagination.totalPages <= 1;
+    $("#rankingDetailsContent").hidden = false;
+    $("#rankingDetailsStatus").textContent = `已加载${data.mode === "today" ? "今日" : "累计"}浏览明细`;
+    return true;
+  } catch (error) {
+    if (serial !== requestSerial || !session) return;
+    $("#rankingDetailsStatus").textContent = "浏览明细加载失败";
+    notice($("#rankingDetailsError"), error.message || "浏览明细加载失败", "重试");
+    return false;
+  } finally {
+    if (serial === requestSerial) {
+      $("#rankingDetailsContent").setAttribute("aria-busy", "false");
+      $("#refreshRankingDetails").disabled = false;
+      if (ownsRecoveryFocus && session && !$("#analyticsDetailsView").hidden && document.activeElement === document.body) {
+        ($("#rankingDetailsError").hidden ? $("#refreshRankingDetails") : $("#rankingDetailsError [data-retry]"))?.focus();
+      }
+    }
+  }
 }
 function renderRows() {
   const trash = filters.scope === "trash";
@@ -358,6 +531,8 @@ function renderList() {
 }
 async function loadList() {
   if (!session) return;
+  if (!isSettingsPage && filters.view === "analytics") return loadAnalytics();
+  if (!isSettingsPage && filters.view === "analytics-details") return loadRankingDetails();
   const serial = ++requestSerial;
   $("#listLoading").hidden = false;
   $("#managerTable").setAttribute("aria-busy", "true");
@@ -410,7 +585,7 @@ async function loadList() {
 }
 function changeFilters(next, push = true) {
   clearTimeout(searchTimer);
-  if (next.view === "upload") $("#searchInput").value = "";
+  if (["upload", "analytics"].includes(next.view)) $("#searchInput").value = "";
   filters = {
     ...filters,
     view: "documents",
@@ -823,6 +998,116 @@ function revealSettingsError(field, message) {
   }
   field.focus();
 }
+function markSettingsDirty() {
+  settingsDirty = true;
+  settingsEditSerial++;
+  updateSaveState();
+}
+function validPublicLink(value) {
+  if (!value || value.length > 2048 || /[\u0000-\u001f\u007f\\]/.test(value) || !(value.startsWith("/") && !value.startsWith("//") || /^https?:\/\//i.test(value))) return false;
+  try {
+    const parsed = new URL(value, location.origin);
+    return ["http:", "https:"].includes(parsed.protocol) && !parsed.username && !parsed.password;
+  } catch { return false; }
+}
+function renderBrandPreview() {
+  $("#brandPreviewTitle").textContent = $("#siteNameInput").value.trim() || "猎看文档系统";
+  const caption = $("#publicBrandCaptionInput").value.trim();
+  $("#brandPreviewCaption").textContent = caption;
+  $("#brandPreviewCaption").hidden = !caption;
+  const value = $("#publicLogoUrlInput").value.trim(), url = validPublicLink(value) ? value : "";
+  const image = $("#brandPreviewImage");
+  const sameUrl = image.getAttribute("src") === url;
+  const showImage = !!url && !(sameUrl && image.complete && !image.naturalWidth);
+  $("#brandPreviewSymbol").innerHTML = icon("document");
+  $("#brandPreviewSymbol").hidden = showImage;
+  $("#brandPreviewMark").classList.toggle("has-image", showImage);
+  image.hidden = !showImage;
+  if (url && !sameUrl) image.setAttribute("src", url);
+  if (!url) image.removeAttribute("src");
+}
+async function uploadBrandLogo(file) {
+  if (!file || logoUploading || !metadataReady) return;
+  const epoch = sessionEpoch, serial = ++logoUploadSerial;
+  logoUploading = true;
+  updateSaveState();
+  $("#brandLogoStatus").textContent = "正在上传 LOGO…";
+  try {
+    if (file.size > 2 * 1024 * 1024) throw new Error("LOGO 图片最大为 2 MiB");
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) throw new Error("请上传 PNG、JPG 或 WebP 图片");
+    if (typeof createImageBitmap === "function") {
+      const image = await createImageBitmap(file);
+      const tooLarge = image.width > 4096 || image.height > 4096;
+      image.close();
+      if (tooLarge) throw new Error("LOGO 图片宽高不能超过 4096 像素");
+    }
+    if (epoch !== sessionEpoch || serial !== logoUploadSerial || !session) return;
+    const form = new FormData();
+    form.append("file", file);
+    const result = await api("/api/brand/logo", { method: "POST", body: form });
+    if (epoch !== sessionEpoch || serial !== logoUploadSerial || !session) return;
+    $("#publicLogoUrlInput").value = result.url;
+    renderBrandPreview();
+    markSettingsDirty();
+    $("#brandLogoStatus").textContent = "LOGO 已上传，保存设置后在前台生效。";
+  } catch (error) {
+    if (epoch !== sessionEpoch || serial !== logoUploadSerial || !session) return;
+    const message = error.name === "InvalidStateError" ? "图片无法读取，请选择完整的 PNG、JPG 或 WebP 图片。" : error.message;
+    $("#brandLogoStatus").textContent = message;
+    revealSettingsError($("#publicLogoUrlInput"), message);
+  } finally {
+    if (serial === logoUploadSerial) {
+      logoUploading = false;
+      updateSaveState();
+    }
+  }
+}
+function renderNavigationPreview() {
+  $("#navigationPreviewBrand").textContent = $("#siteNameInput").value.trim() || "猎看文档系统";
+  const host = $("#navigationPreviewLinks");
+  host.replaceChildren();
+  for (const item of navigationDraft.filter(item => item.enabled)) {
+    const label = document.createElement("span");
+    label.textContent = item.label.trim() || "未命名菜单";
+    host.append(label);
+  }
+}
+function renderNavigationEditor() {
+  $("#navigationItems").innerHTML = navigationDraft.map((item, index) => {
+    const builtin = item.id === "all-documents", id = esc(item.id);
+    return `<li class="navigation-item" data-navigation-id="${id}">
+      <div class="navigation-item-heading"><strong>菜单 ${index + 1}${builtin ? ' <span class="hint">内置入口</span>' : ""}</strong><div class="navigation-item-actions">
+        <button class="btn small" type="button" data-navigation-action="up" aria-label="上移菜单 ${index + 1}" ${index === 0 ? "disabled" : ""}>上移</button>
+        <button class="btn small" type="button" data-navigation-action="down" aria-label="下移菜单 ${index + 1}" ${index === navigationDraft.length - 1 ? "disabled" : ""}>下移</button>
+        ${builtin ? "" : '<button class="btn small danger" type="button" data-navigation-action="remove">删除</button>'}
+      </div></div>
+      <div class="navigation-item-fields">
+        <label class="field"><span>菜单名称</span><input id="navigationLabel-${id}" data-navigation-field="label" value="${esc(item.label)}" maxlength="20" required ${builtin ? "disabled" : ""} /><small class="field-error" data-error-for="navigationLabel-${id}" hidden></small></label>
+        <label class="field"><span>跳转地址</span><input id="navigationUrl-${id}" data-navigation-field="url" value="${esc(item.url)}" maxlength="2048" placeholder="/type/html 或 https://example.com" required ${builtin ? "disabled" : ""} /><small class="field-error" data-error-for="navigationUrl-${id}" hidden></small></label>
+        <label class="field"><span>打开方式</span><select data-navigation-field="newTab" ${builtin ? "disabled" : ""}><option value="same" ${!item.newTab ? "selected" : ""}>当前页面</option><option value="new" ${item.newTab ? "selected" : ""}>新标签页</option></select></label>
+        <label class="checkbox-field navigation-enabled"><input type="checkbox" data-navigation-field="enabled" ${item.enabled ? "checked" : ""} ${builtin ? "disabled" : ""} /><span>显示菜单</span></label>
+      </div>
+      ${builtin ? '<p class="hint">打开全部公开文档，清除当前关键词和分类条件。</p>' : '<label class="navigation-shortcut"><span>快捷地址</span><select data-navigation-preset aria-label="选择菜单快捷地址"><option value="">选择站内页面</option><option value="/">首页</option><option value="/type/html">HTML文档</option><option value="/type/pdf">PDF文档</option><option value="/type/word">Word文档</option></select></label>'}
+    </li>`;
+  }).join("");
+  $("#navigationCount").textContent = `${navigationDraft.length} / 10`;
+  $("#addNavigationItem").disabled = navigationDraft.length >= 10;
+  renderNavigationPreview();
+}
+function validateNavigationDraft() {
+  for (const item of navigationDraft) {
+    if (!item.label.trim() || [...item.label.trim()].length > 20) {
+      revealSettingsError($("#navigationLabel-" + item.id), "菜单名称需填写 1 至 20 个字符");
+      return false;
+    }
+    const url = item.url.trim();
+    if (!validPublicLink(url)) {
+      revealSettingsError($("#navigationUrl-" + item.id), "菜单链接需填写站内路径或 HTTP/HTTPS 地址");
+      return false;
+    }
+  }
+  return true;
+}
 function updateSaveState() {
   $("#remoteSyncUrlInput").required = $("#remoteSyncEnabledInput").checked;
   $("#remoteSyncUrlInput").disabled = !$("#remoteSyncEnabledInput").checked;
@@ -835,13 +1120,18 @@ function updateSaveState() {
       : "已保存";
   $("#settingsSaveState").textContent = text;
   $("#settingsBottomState").textContent = text;
-  $("#saveSettings").disabled = settingsSaving || !metadataReady;
-  $("#saveSettingsTop").disabled = settingsSaving || !metadataReady;
+  $("#saveSettings").disabled = settingsSaving || logoUploading || !metadataReady;
+  $("#saveSettingsTop").disabled = settingsSaving || logoUploading || !metadataReady;
+  $("#uploadBrandLogo").disabled = logoUploading || !metadataReady;
+  $("#resetBrandLogo").disabled = logoUploading || !metadataReady;
+  $("#publicLogoUrlInput").disabled = logoUploading;
   $("#settingsForm").inert = !metadataReady;
 }
 const settingFields = {
   siteName: "siteNameInput",
   adminName: "adminNameInput",
+  publicLogoUrl: "publicLogoUrlInput",
+  publicBrandCaption: "publicBrandCaptionInput",
   publicSeoTitle: "publicSeoTitleInput",
   publicSeoDescription: "publicSeoDescriptionInput",
   publicSeoKeywords: "publicSeoKeywordsInput",
@@ -857,6 +1147,10 @@ function fillSettings() {
     $("#publicHomepageEnabledInput").checked =
       settings.publicHomepageEnabled !== false;
     $("#remoteSyncEnabledInput").checked = Boolean(settings.remoteSyncEnabled);
+    $("#publicBrandCaptionInput").value = settings.publicBrandCaption ?? "DOCUMENT WORKSPACE";
+    navigationDraft = (settings.publicNavigation || [{ id: "all-documents", label: "全部文档", url: "/?view=resources", newTab: false, enabled: true }]).map(item => ({ ...item }));
+    renderNavigationEditor();
+    renderBrandPreview();
   }
   $("#remoteTokenState").textContent = settings.remoteSyncHasToken
     ? "已保存 Token，留空保持原值。"
@@ -955,7 +1249,7 @@ async function watchAction(button) {
 }
 async function saveSettings(event) {
   event.preventDefault();
-  if (settingsSaving || !metadataReady) return;
+  if (settingsSaving || logoUploading || !metadataReady) return;
   document
     .querySelectorAll("[data-error-for]")
     .forEach((el) => (el.hidden = true));
@@ -964,6 +1258,12 @@ async function saveSettings(event) {
     .forEach((el) => el.removeAttribute("aria-invalid"));
   updateSaveState();
   const form = $("#settingsForm");
+  if (!validateNavigationDraft()) return;
+  const logoUrl = $("#publicLogoUrlInput").value.trim();
+  if (logoUrl && !validPublicLink(logoUrl)) {
+    revealSettingsError($("#publicLogoUrlInput"), "LOGO 图片需填写站内路径或 HTTP/HTTPS 地址");
+    return;
+  }
   const invalid = [...form.querySelectorAll("input, select, textarea")]
     .find(field => field.willValidate && !field.validity.valid);
   if (invalid) {
@@ -981,6 +1281,7 @@ async function saveSettings(event) {
     remoteSyncToken: $("#remoteSyncTokenInput").value,
     authPassword: $("#authPasswordInput").value,
     currentPassword: $("#currentPasswordInput").value,
+    publicNavigation: navigationDraft.map(item => ({ ...item, label: item.label.trim(), url: item.url.trim() })),
   });
   settingsSaving = true;
   const submittedSerial = settingsEditSerial;
@@ -1012,7 +1313,7 @@ async function saveSettings(event) {
     toast("设置已保存");
     if (previous !== adminBase) location.assign(`${adminBase}/settings${location.hash}`);
   } catch (error) {
-    const id = /密码/.test(error.message)
+    const id = error.field || (/publicLogoUrl/.test(error.message) ? "publicLogoUrlInput" : /publicBrandCaption/.test(error.message) ? "publicBrandCaptionInput" : /publicNavigation|菜单/.test(error.message) ? "navigationSettings" : /密码/.test(error.message)
       ? "currentPasswordInput"
       : /目录|路径/.test(error.message)
         ? "adminPathInput"
@@ -1020,7 +1321,7 @@ async function saveSettings(event) {
           ? "authUsernameInput"
           : /地址|URL/.test(error.message)
             ? "remoteSyncUrlInput"
-            : null;
+            : null);
     if (id) {
       revealSettingsError($("#" + id), error.message);
     }
@@ -1489,8 +1790,8 @@ document.querySelectorAll("[data-nav-type]").forEach((link) =>
     const type = link.dataset.navType;
     changeFilters({
       ...(type === "upload" ? { q: "", visibility: "all", accessMode: "all", password: "all", sort: "updated_desc" } : {}),
-      view: type === "upload" ? "upload" : "documents",
-      type: ["trash", "upload"].includes(type) ? "all" : type,
+      view: ["upload", "analytics"].includes(type) ? type : "documents",
+      type: ["trash", "upload", "analytics"].includes(type) ? "all" : type,
       scope: type === "trash" ? "trash" : "active",
       status: "all",
       directory: "",
@@ -1503,6 +1804,42 @@ $("#uploadListLink").onclick = (event) => {
   event.preventDefault();
   clearFilters();
 };
+$("#refreshAnalytics").onclick = loadAnalytics;
+$("#analyticsRange").onchange = () => {
+  filters.analyticsDays = Number($("#analyticsRange").value);
+  writeUrl(true);
+  loadAnalytics();
+};
+$("#analyticsError").onclick = event => {
+  if (event.target.closest("[data-retry]")) loadAnalytics();
+};
+$("#refreshRankingDetails").onclick = loadRankingDetails;
+$("#rankingDetailsError").onclick = event => {
+  if (event.target.closest("[data-retry]")) loadRankingDetails();
+};
+$("#rankingDetailsPager").addEventListener("click", async event => {
+  const button = event.target.closest("[data-page]");
+  if (!button || button.disabled) return;
+  const ownsFocus = document.activeElement === button;
+  const page = Number(button.dataset.page);
+  filters.page = page;
+  writeUrl(true);
+  const pending = loadRankingDetails();
+  const serial = requestSerial;
+  const loaded = await pending;
+  if (serial !== requestSerial || !session || $("#analyticsDetailsView").hidden) return;
+  if (loaded) $("#mainContent").scrollTop = 0;
+  if (!ownsFocus || document.activeElement !== document.body) return;
+  if (loaded === false) $("#rankingDetailsError [data-retry]")?.focus();
+  else if (loaded === true) {
+    ($("#rankingDetailsPager").hidden ? $("#rankingDetailsTitle") : $("#rankingDetailsPager button[aria-current=page]") || $("#rankingDetailsTitle")).focus();
+  }
+});
+const analyticsChartObserver = new ResizeObserver(() => {
+  const chart = $("#analyticsChart");
+  if (analyticsData && !$("#analyticsView").hidden && !$("#analyticsContent").hidden && chart.clientWidth > 0 && chart.clientWidth !== analyticsChartWidth) renderAnalyticsChart(analyticsData);
+});
+analyticsChartObserver.observe($("#analyticsChart"));
 $("#paginationBar").onclick = (event) => {
   const button = event.target.closest("[data-page]");
   if (!button || button.disabled) return;
@@ -1573,11 +1910,78 @@ document.addEventListener("click", (event) => {
   }
 });
 $("#settingsForm").addEventListener("input", (event) => {
-  if (event.target.id === "watchDirInput") return;
-  settingsDirty = true;
-  settingsEditSerial++;
-  updateSaveState();
+  if (["watchDirInput", "brandLogoFile"].includes(event.target.id)) return;
+  const field = event.target.dataset.navigationField;
+  if (field) {
+    const item = navigationDraft.find(item => item.id === event.target.closest("[data-navigation-id]").dataset.navigationId);
+    if (!item || item.id === "all-documents") return;
+    item[field] = field === "enabled" ? event.target.checked : field === "newTab" ? event.target.value === "new" : event.target.value;
+  }
+  if (field || event.target.id === "siteNameInput") renderNavigationPreview();
+  if (["siteNameInput", "publicLogoUrlInput", "publicBrandCaptionInput"].includes(event.target.id)) renderBrandPreview();
+  markSettingsDirty();
 });
+$("#uploadBrandLogo").onclick = () => $("#brandLogoFile").click();
+$("#brandLogoFile").onchange = event => {
+  const file = event.target.files[0];
+  event.target.value = "";
+  return uploadBrandLogo(file);
+};
+$("#resetBrandLogo").onclick = () => {
+  $("#publicLogoUrlInput").value = "";
+  $("#publicLogoUrlInput").removeAttribute("aria-invalid");
+  document.querySelector('[data-error-for="publicLogoUrlInput"]').hidden = true;
+  $("#brandLogoStatus").textContent = "已恢复默认图标，保存设置后生效。";
+  renderBrandPreview();
+  markSettingsDirty();
+};
+$("#brandPreviewImage").onerror = () => {
+  $("#brandPreviewImage").hidden = true;
+  $("#brandPreviewSymbol").hidden = false;
+  $("#brandPreviewMark").classList.remove("has-image");
+};
+$("#addNavigationItem").onclick = () => {
+  if (!metadataReady || navigationDraft.length >= 10) return;
+  const id = `menu-${Date.now().toString(36)}-${++navigationSerial}`;
+  navigationDraft.push({ id, label: "", url: "", newTab: false, enabled: true });
+  renderNavigationEditor();
+  markSettingsDirty();
+  $("#navigationLabel-" + id).focus();
+  $("#navigationStatus").textContent = "已添加菜单，请填写名称和跳转地址。";
+};
+$("#navigationItems").onclick = event => {
+  const button = event.target.closest("[data-navigation-action]");
+  if (!button || button.disabled || !metadataReady) return;
+  const row = button.closest("[data-navigation-id]");
+  const index = navigationDraft.findIndex(item => item.id === row.dataset.navigationId);
+  const item = navigationDraft[index], action = button.dataset.navigationAction;
+  if (!item) return;
+  const target = action === "up" ? index - 1 : index + 1;
+  if (action === "remove") {
+    if (item.id === "all-documents") return;
+    navigationDraft.splice(index, 1);
+  } else {
+    if (target < 0 || target >= navigationDraft.length) return;
+    [navigationDraft[index], navigationDraft[target]] = [navigationDraft[target], item];
+  }
+  renderNavigationEditor();
+  markSettingsDirty();
+  const nextRow = $("#navigationItems").children[action === "remove" ? Math.min(index, navigationDraft.length - 1) : target];
+  (nextRow.querySelector(`[data-navigation-action="${action}"]:not(:disabled)`) || nextRow.querySelector("button:not(:disabled)") || $("#addNavigationItem")).focus();
+  $("#navigationStatus").textContent = action === "remove" ? "菜单已删除，保存设置后生效。" : `${item.label || "未命名菜单"}已移至第 ${target + 1} 项。`;
+};
+$("#navigationItems").onchange = event => {
+  if (!event.target.hasAttribute("data-navigation-preset") || !event.target.value) return;
+  const row = event.target.closest("[data-navigation-id]");
+  const item = navigationDraft.find(item => item.id === row.dataset.navigationId);
+  item.url = event.target.value;
+  if (!item.label.trim()) item.label = [...event.target.options].find(option => option.value === item.url).textContent;
+  $("#navigationUrl-" + item.id).value = item.url;
+  $("#navigationLabel-" + item.id).value = item.label;
+  event.target.value = "";
+  renderNavigationPreview();
+  markSettingsDirty();
+};
 $("#settingsForm").onsubmit = saveSettings;
 $(".settings-tabs").onclick = (event) => {
   const tab = event.target.closest('[role="tab"]');
@@ -1769,6 +2173,7 @@ window.addEventListener("popstate", async () => {
     await loadList();
   } catch {}
   if (serial !== previewSerial || !session) return;
+  if (["analytics", "analytics-details"].includes(filters.view)) return;
   if (filters.preview) await openPreview(filters.preview, false);
   else restoreListPosition();
 });
@@ -1785,7 +2190,7 @@ async function startAuthenticated() {
     if (epoch !== sessionEpoch || !session) return;
     await loadList();
     if (epoch !== sessionEpoch || !session) return;
-    if (filters.preview && !isSettingsPage)
+    if (filters.preview && !["analytics", "analytics-details"].includes(filters.view) && !isSettingsPage)
       await openPreview(filters.preview, false);
     if (epoch !== sessionEpoch || !session) return;
     if (stagedUpload && session) {
