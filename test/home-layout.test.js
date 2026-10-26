@@ -1494,6 +1494,49 @@ const rankingDetailsResult = (mode = "total", page = 1) => {
   };
 };
 
+test("ranking pagination keeps the new result heading visible after a successful page change", async () => {
+  let active, document;
+  const h = await appHarness(async url => {
+    active = document.body;
+    return response(rankingDetailsResult("total", Number(new URL(url, "http://test").searchParams.get("page"))));
+  }, "/admin?view=analytics-details&ranking=total");
+  document = h.document;
+  Object.defineProperty(document, "activeElement", { configurable: true, get: () => active });
+  const proto = h.window.HTMLElement.prototype, previousFocus = proto.focus;
+  const main = document.querySelector("#mainContent");
+  proto.focus = function (options = {}) {
+    active = this;
+    if (this.closest("#rankingDetailsPager") && !options.preventScroll) main.scrollTop = 900;
+  };
+  try {
+    h.app.setSession(true);
+    await h.app.loadList();
+    const next = document.querySelector('#rankingDetailsPager [aria-label="下一页"]');
+    next.focus();
+    await h.clickRanking(next);
+    assert.equal(main.scrollTop, 0, "footer focus must not undo the scroll to the new page's first rows");
+    assert.equal(active.id, "rankingDetailsTitle");
+  } finally { proto.focus = previousFocus; }
+});
+
+test("clicking the current ranking page does not repeat a request or push duplicate history", async () => {
+  let requests = 0, pushes = 0;
+  const h = await appHarness(async url => {
+    requests++;
+    return response(rankingDetailsResult("total", Number(new URL(url, "http://test").searchParams.get("page"))));
+  }, "/admin?view=analytics-details&ranking=total", {
+    history: { state: null, replaceState() {}, pushState() { pushes++; }, back() {} },
+  });
+  h.app.setSession(true);
+  await h.app.loadList();
+  await h.clickRanking(h.document.querySelector('#rankingDetailsPager [aria-current="page"]'));
+  assert.equal(pushes, 0);
+  assert.equal(requests, 1);
+  await h.clickRanking(h.document.querySelector('#rankingDetailsPager [aria-label="下一页"]'));
+  assert.equal(pushes, 1, "a real page change still creates a navigable history entry");
+  assert.equal(requests, 2);
+});
+
 test("analytics overview shows only Top 10 and always exposes both independent detail links", async () => {
   const data = analyticsResult(7);
   for (const mode of ["total", "today"]) {
@@ -1741,7 +1784,7 @@ test("analytics chart observes container changes without requiring window resize
   assert.equal(chart.querySelector("svg").getAttribute("viewBox"), "0 0 606 240");
 });
 
-test("analytics keyboard pagination focuses retry after failure and restores enabled paging after success", async () => {
+test("analytics keyboard pagination focuses retry after failure and the new results after success", async () => {
   let failing = false, active, document;
   const h = await appHarness(async url => {
     active = document.body;
@@ -1779,8 +1822,7 @@ test("analytics keyboard pagination focuses retry after failure and restores ena
     previous.focus();
     await h.clickRanking(previous);
     assert.equal(document.querySelector("#rankingDetailsContent").hidden, false);
-    assert.equal(active.dataset.page, "1");
-    assert.equal(active.disabled, false);
+    assert.equal(active.id, "rankingDetailsTitle");
   } finally { proto.focus = previousFocus; }
 });
 

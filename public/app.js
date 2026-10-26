@@ -1822,6 +1822,7 @@ $("#rankingDetailsPager").addEventListener("click", async event => {
   if (!button || button.disabled) return;
   const ownsFocus = document.activeElement === button;
   const page = Number(button.dataset.page);
+  if (page === filters.page) return;
   filters.page = page;
   writeUrl(true);
   const pending = loadRankingDetails();
@@ -1831,9 +1832,7 @@ $("#rankingDetailsPager").addEventListener("click", async event => {
   if (loaded) $("#mainContent").scrollTop = 0;
   if (!ownsFocus || document.activeElement !== document.body) return;
   if (loaded === false) $("#rankingDetailsError [data-retry]")?.focus();
-  else if (loaded === true) {
-    ($("#rankingDetailsPager").hidden ? $("#rankingDetailsTitle") : $("#rankingDetailsPager button[aria-current=page]") || $("#rankingDetailsTitle")).focus();
-  }
+  else if (loaded === true) $("#rankingDetailsTitle").focus({ preventScroll: true });
 });
 const analyticsChartObserver = new ResizeObserver(() => {
   const chart = $("#analyticsChart");
