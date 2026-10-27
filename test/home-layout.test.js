@@ -1784,6 +1784,86 @@ test("analytics chart observes container changes without requiring window resize
   assert.equal(chart.querySelector("svg").getAttribute("viewBox"), "0 0 606 240");
 });
 
+test("analytics trend hover selects nearby dates and distinguishes exact counts, zero and unrecorded days", async () => {
+  const data = analyticsResult(7, 123456789);
+  data.trend[1].views = null;
+  const { app, document } = await appHarness(async () => response(data), "/admin?view=analytics");
+  const chart = document.querySelector("#analyticsChart");
+  Object.defineProperty(chart, "clientWidth", { value: 730 });
+  chart.getBoundingClientRect = () => ({ left: 20, top: 40 });
+  app.setSession(true);
+  await app.loadList();
+  const svg = chart.querySelector("svg"), tooltip = chart.querySelector('[role="tooltip"]');
+  svg.getBoundingClientRect = () => ({ left: 36, top: 40, bottom: 280, width: 698, height: 240 });
+  Object.defineProperty(tooltip, "offsetWidth", { value: 180 });
+  Object.defineProperty(tooltip, "offsetHeight", { value: 60 });
+  const grid = svg.querySelector(".chart-grid");
+  const firstX = Number(grid.getAttribute("x1")), lastX = Number(grid.getAttribute("x2"));
+  const point = index => ({ clientX: 36 + firstX + (lastX - firstX) * index / 6, clientY: 140 });
+  assert.equal(tooltip.hidden, true);
+  svg.onpointermove(point(6));
+  assert.equal(tooltip.hidden, false);
+  assert.equal(tooltip.querySelector(".chart-tooltip-date").textContent, data.trend[6].date);
+  assert.equal(tooltip.querySelector("strong").textContent, "123,456,789");
+  assert.equal(svg.querySelector(".chart-cursor").getAttribute("visibility"), "visible");
+  assert.ok(parseFloat(tooltip.style.left) >= 8);
+  assert.ok(parseFloat(tooltip.style.left) + 180 <= 722);
+  assert.ok(parseFloat(tooltip.style.top) >= 8);
+  assert.ok(parseFloat(tooltip.style.top) + 60 <= 232);
+  svg.onpointermove(point(0.15));
+  assert.equal(tooltip.querySelector("strong").textContent, "0");
+  assert.equal(tooltip.querySelector(".chart-tooltip-date").textContent, data.trend[0].date);
+  svg.onpointermove(point(1));
+  assert.equal(tooltip.querySelector("strong").textContent, "未记录");
+  assert.equal(svg.querySelector(".chart-cursor circle").getAttribute("visibility"), "hidden");
+  svg.onpointerleave({ pointerType: "mouse" });
+  assert.equal(tooltip.hidden, true);
+  assert.equal(svg.querySelector(".chart-cursor").getAttribute("visibility"), "hidden");
+  svg.onpointerdown({ ...point(6), pointerType: "touch" });
+  svg.onpointerleave({ pointerType: "touch" });
+  assert.equal(tooltip.hidden, false);
+  svg.onpointercancel();
+  assert.equal(tooltip.hidden, true);
+  svg.onpointermove({ ...point(6), clientX: 36 + lastX + 2 });
+  assert.equal(tooltip.querySelector("strong").textContent, "123,456,789");
+  svg.onpointermove({ clientX: 36, clientY: 140 });
+  assert.equal(tooltip.hidden, true);
+});
+
+test("analytics trend tooltip supports keyboard navigation and clears old values when refreshed", async () => {
+  let data = analyticsResult(7, 18);
+  const { app, document } = await appHarness(async () => response(data), "/admin?view=analytics");
+  app.setSession(true);
+  await app.loadList();
+  const chart = document.querySelector("#analyticsChart"), svg = chart.querySelector("svg");
+  const tooltip = chart.querySelector('[role="tooltip"]');
+  assert.equal(svg.getAttribute("tabindex"), "0");
+  svg.onfocus();
+  assert.equal(tooltip.hidden, false);
+  assert.equal(tooltip.querySelector("strong").textContent, "18");
+  const press = key => {
+    let prevented = false;
+    svg.onkeydown({ key, preventDefault() { prevented = true; } });
+    return prevented;
+  };
+  assert.equal(press("ArrowLeft"), true);
+  assert.equal(tooltip.querySelector(".chart-tooltip-date").textContent, data.trend[5].date);
+  press("Home"); press("ArrowLeft");
+  assert.equal(tooltip.querySelector(".chart-tooltip-date").textContent, data.trend[0].date);
+  press("End"); press("ArrowRight");
+  assert.equal(tooltip.querySelector(".chart-tooltip-date").textContent, data.trend[6].date);
+  press("Escape");
+  assert.equal(tooltip.hidden, true);
+  svg.onfocus(); svg.onblur();
+  assert.equal(tooltip.hidden, true);
+  data = analyticsResult(90, 36);
+  await app.loadList();
+  const fresh = chart.querySelector('[role="tooltip"]');
+  assert.equal(fresh.hidden, true);
+  chart.querySelector("svg").onfocus();
+  assert.equal(fresh.querySelector("strong").textContent, "36");
+});
+
 test("analytics keyboard pagination focuses retry after failure and the new results after success", async () => {
   let failing = false, active, document;
   const h = await appHarness(async url => {

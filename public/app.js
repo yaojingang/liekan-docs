@@ -332,6 +332,8 @@ function compactCount(value) {
 }
 function renderAnalyticsChart(data) {
   const chart = $("#analyticsChart"), padding = getComputedStyle(chart);
+  const restoreFocus = document.activeElement === chart.querySelector("svg");
+  const focusedDate = restoreFocus ? chart.querySelector(".chart-tooltip-date")?.textContent : "";
   analyticsChartWidth = chart.clientWidth;
   const width = Math.max(260, chart.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight) || 800), height = 240;
   const left = 44, right = width - 16, top = 16, bottom = 208;
@@ -346,7 +348,56 @@ function renderAnalyticsChart(data) {
   const points = data.trend.flatMap((day, i) => day.views === null ? [] : [{ ...day, x: x(i), y: y(day.views) }]);
   const line = points.map((p, i) => `${i ? "L" : "M"}${p.x},${p.y}`).join(" ");
   const area = points.length ? `${line} L${points.at(-1).x},${bottom} L${points[0].x},${bottom} Z` : "";
-  $("#analyticsChart").innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="trendChartTitle trendChartDescription"><title id="trendChartTitle">近 ${data.days} 天浏览趋势</title><desc id="trendChartDescription">共 ${countText(data.summary.periodViews)} 次浏览，按日展示，详细数值可展开下方每日数据。</desc>${grid}${dates}<path d="${area}" class="chart-area"/><path d="${line}" class="chart-line"/>${points.map(p => `<circle cx="${p.x}" cy="${p.y}" r="${points.length > 31 ? 2 : 3}" class="chart-dot"><title>${p.date}：${countText(p.views)} 次浏览，${p.documents} 份文档</title></circle>`).join("")}</svg>${data.summary.periodViews ? "" : '<p class="chart-empty">所选时段暂无浏览记录</p>'}`;
+  chart.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" tabindex="0" aria-label="近 ${data.days} 天浏览趋势" aria-describedby="trendChartDescription trendChartTooltip"><desc id="trendChartDescription">共 ${countText(data.summary.periodViews)} 次浏览。移动鼠标或点选查看每日数值，聚焦后可用左右方向键切换日期，Escape 关闭提示。详细数值也可展开下方每日数据。</desc>${grid}${dates}<path d="${area}" class="chart-area"/><path d="${line}" class="chart-line"/>${points.map(p => `<circle cx="${p.x}" cy="${p.y}" r="${points.length > 31 ? 2 : 3}" class="chart-dot"/>`).join("")}<g class="chart-cursor" visibility="hidden" aria-hidden="true"><line y1="${top}" y2="${bottom}"/><circle r="5"/></g></svg><div class="chart-tooltip" id="trendChartTooltip" role="tooltip" aria-live="polite" hidden><div class="chart-tooltip-date"></div><div class="chart-tooltip-value"><span>浏览量（PV）</span><strong></strong></div></div>${data.summary.periodViews ? "" : '<p class="chart-empty">所选时段暂无浏览记录</p>'}`;
+  const svg = chart.querySelector("svg"), tooltip = chart.querySelector(".chart-tooltip");
+  const cursor = chart.querySelector(".chart-cursor"), guide = cursor.querySelector("line"), dot = cursor.querySelector("circle");
+  let selected = data.trend.findIndex(day => day.date === focusedDate);
+  if (selected < 0) selected = data.trend.length - 1;
+  function hideTooltip() {
+    tooltip.hidden = true;
+    cursor.setAttribute("visibility", "hidden");
+  }
+  function showTooltip(index) {
+    const day = data.trend[index];
+    if (!day || (index === selected && !tooltip.hidden)) return;
+    selected = index;
+    tooltip.querySelector(".chart-tooltip-date").textContent = day.date;
+    tooltip.querySelector("strong").textContent = day.views === null ? "未记录" : countText(day.views);
+    tooltip.hidden = false;
+    cursor.setAttribute("visibility", "visible");
+    guide.setAttribute("x1", x(index));
+    guide.setAttribute("x2", x(index));
+    dot.setAttribute("cx", x(index));
+    dot.setAttribute("cy", y(day.views || 0));
+    dot.setAttribute("visibility", day.views === null ? "hidden" : "inherit");
+    const box = svg.getBoundingClientRect(), container = chart.getBoundingClientRect();
+    const px = box.left - container.left + x(index) / width * box.width;
+    const py = box.top - container.top + y(day.views || 0) / height * box.height;
+    tooltip.style.left = `${Math.max(8, Math.min(chart.clientWidth - tooltip.offsetWidth - 8, px - tooltip.offsetWidth / 2))}px`;
+    const above = py - tooltip.offsetHeight - 12;
+    tooltip.style.top = `${Math.max(8, Math.min(box.bottom - container.top - tooltip.offsetHeight - 8, above >= 8 ? above : py + 12))}px`;
+  }
+  function pointTooltip(event) {
+    const box = svg.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    const px = (event.clientX - box.left) / box.width * width;
+    const py = (event.clientY - box.top) / box.height * height;
+    if (px < left - 8 || px > right + 8 || py < top - 8 || py > bottom + 8) return hideTooltip();
+    showTooltip(Math.max(0, Math.min(data.trend.length - 1, Math.round((px - left) / (right - left) * (data.trend.length - 1)))));
+  }
+  svg.onpointermove = pointTooltip;
+  svg.onpointerdown = pointTooltip;
+  svg.onpointerleave = event => { if (event.pointerType !== "touch") hideTooltip(); };
+  svg.onpointercancel = hideTooltip;
+  svg.onfocus = () => showTooltip(selected);
+  svg.onblur = hideTooltip;
+  svg.onkeydown = event => {
+    if (event.key === "Escape") return hideTooltip();
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    showTooltip(event.key === "Home" ? 0 : event.key === "End" ? data.trend.length - 1 : Math.max(0, Math.min(data.trend.length - 1, selected + (event.key === "ArrowLeft" ? -1 : 1))));
+  };
+  if (restoreFocus) svg.focus({ preventScroll: true });
 }
 function rankingTableHtml(mode, ranked, precise = false) {
   const prefix = mode === "total" ? "累计" : "今日";
