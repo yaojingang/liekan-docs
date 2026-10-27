@@ -11,7 +11,7 @@ import {
   confirmAction,
   openMenu,
   notice,
-} from "./ui.js?v=202610251";
+} from "./ui.js?v=202610271";
 const $ = (selector) => document.querySelector(selector);
 const labels = {
   upload: "上传文档",
@@ -685,10 +685,37 @@ async function copyPage(page) {
     toast("复制失败，请从文档信息中复制链接。", "error");
   }
 }
+async function downloadPage(page) {
+  const epoch = sessionEpoch;
+  try {
+    const response = await fetch(apiUrl(`/api/pages/${encodeURIComponent(page.id)}/download`), {
+      credentials: "same-origin",
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      if (response.status === 401 && epoch === sessionEpoch)
+        showLogin("登录已失效，请重新登录。");
+      throw new Error(data.error || "下载失败，请稍后重试。");
+    }
+    const blob = await response.blob();
+    if (epoch !== sessionEpoch || !session) return;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = page.fileName;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (error) {
+    if (epoch === sessionEpoch) toast(error.message || "下载失败，请稍后重试。", "error");
+  }
+}
 function menuItems(page) {
   return [
     { label: "访问设置", icon: "lock", run: () => openAccess(page) },
     { label: "复制链接", icon: "copy", run: () => copyPage(page) },
+    { label: "下载源文件", icon: "download", run: () => downloadPage(page) },
     {
       label: "新窗口打开",
       icon: "external",
@@ -1873,6 +1900,7 @@ $("#rankingDetailsPager").addEventListener("click", async event => {
   if (!button || button.disabled) return;
   const ownsFocus = document.activeElement === button;
   const page = Number(button.dataset.page);
+  if (page === filters.page) return;
   filters.page = page;
   writeUrl(true);
   const pending = loadRankingDetails();
@@ -1882,9 +1910,7 @@ $("#rankingDetailsPager").addEventListener("click", async event => {
   if (loaded) $("#mainContent").scrollTop = 0;
   if (!ownsFocus || document.activeElement !== document.body) return;
   if (loaded === false) $("#rankingDetailsError [data-retry]")?.focus();
-  else if (loaded === true) {
-    ($("#rankingDetailsPager").hidden ? $("#rankingDetailsTitle") : $("#rankingDetailsPager button[aria-current=page]") || $("#rankingDetailsTitle")).focus();
-  }
+  else if (loaded === true) $("#rankingDetailsTitle").focus({ preventScroll: true });
 });
 const analyticsChartObserver = new ResizeObserver(() => {
   const chart = $("#analyticsChart");

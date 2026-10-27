@@ -117,12 +117,12 @@ async function syncPageToRemote(app, page) {
   }
 }
 
-function inlineContentDisposition(fileName) {
+function contentDisposition(fileName, disposition = "inline") {
   const fallback =
     String(fileName || "document.pdf")
       .replace(/[^\w.-]+/g, "-")
       .replace(/^-+|-+$/g, "") || "document.pdf";
-  return `inline; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(fileName || fallback)}`;
+  return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(fileName || fallback)}`;
 }
 
 function parseCookies(header = "") { return cookies(header); }
@@ -248,7 +248,7 @@ async function sendGeneratedPage(app, request, reply, rawSlug) {
       .header("cache-control", "no-store")
       .header(
         "content-disposition",
-        inlineContentDisposition(`${page.slug}.pdf`),
+        contentDisposition(`${page.slug}.pdf`),
       )
       .type(page.mimeType || "application/pdf")
       .send(buffer);
@@ -415,6 +415,26 @@ function registerApiRoutes(app, prefix = "") {
     const html =
       page.fileType === "html" ? await app.store.readPageHtml(page) : "";
     return { page: publicPage(page), html };
+  });
+
+  app.get(`${prefix}/api/pages/:id/download`, async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    const page = app.store.getPage(request.params.id);
+    if (!page || page.deletedAt) return sendNotFound(reply, "文档不存在或已移入回收站");
+    try {
+      const filePath = page.sourcePath || (page.fileType !== "word" && await app.store.resolveGeneratedPath(page));
+      if (!filePath) return sendNotFound(reply, "源文件不存在，暂时无法下载");
+      const buffer = await fs.readFile(filePath);
+      return reply
+        .header("content-disposition", contentDisposition(page.fileName, "attachment"))
+        .header("x-content-type-options", "nosniff")
+        .type("application/octet-stream")
+        .send(buffer);
+    } catch (error) {
+      if (["ENOENT", "ENOTDIR", "EACCES"].includes(error.code))
+        return sendNotFound(reply, "源文件不存在或无法读取，暂时无法下载");
+      throw error;
+    }
   });
 
   app.post(`${prefix}/api/pages/upload`, async (request, reply) => {

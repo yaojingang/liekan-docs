@@ -21,6 +21,7 @@ const paths = {
     '<path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
   upload: '<path d="M12 16V3m-4 4 4-4 4 4M4 15v5h16v-5"/>',
+  download: '<path d="M12 3v13m-4-4 4 4 4-4M4 15v5h16v-5"/>',
   refresh:
     '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12-1l2 6M4 12l2 6a7 7 0 0 0 12-1"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
