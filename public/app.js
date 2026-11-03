@@ -45,6 +45,7 @@ let metadataReady = false,
   addingSamples = false;
 let navigationDraft = [], navigationSerial = 0;
 let logoUploading = false, logoUploadSerial = 0;
+let htmlDraft = null;
 let previewPage = null,
   previewSerial = 0,
   listScroll = 0,
@@ -177,6 +178,7 @@ function showError(error) {
   toast(error.message || String(error), "error");
 }
 function showLogin(message = "") {
+  resetHtmlEditor();
   $("#accessPassword").value = ""; accessPage = null;
   sessionEpoch++;
   logoUploadSerial++;
@@ -665,13 +667,114 @@ function clearFilters() {
     sort: "updated_desc",
   });
 }
-function openEditor(page) {
-  if (page?.canEdit && !page.deletedAt)
-    window.open(
-      page.editUrl || `${page.url}?edit=1`,
-      "_blank",
-      "noopener,noreferrer",
-    );
+function htmlEditorDirty() {
+  return htmlDraft && (htmlDraft.mode === "replace" ? Boolean(htmlDraft.file) : $("#htmlSource").value !== htmlDraft.html);
+}
+function htmlEditorState() {
+  const locked = !htmlDraft || htmlDraft.loading || htmlDraft.saving || htmlDraft.failed;
+  for (const id of ["closeHtmlEditor", "cancelHtmlEditor"]) $("#" + id).disabled = Boolean(htmlDraft?.saving);
+  $("#htmlReplacementFile").disabled = locked;
+  $("#htmlSource").readOnly = locked;
+  $("#saveHtmlEditor").disabled = locked || !htmlEditorDirty();
+  $("#saveHtmlEditor").textContent = htmlDraft?.saving ? "保存中…" : htmlDraft?.mode === "replace" ? "确认替换" : "保存 HTML";
+  $("#htmlEditorForm").setAttribute("aria-busy", String(Boolean(htmlDraft?.loading || htmlDraft?.saving)));
+}
+function resetHtmlEditor() {
+  htmlDraft = null;
+  $("#htmlSource").value = "";
+  $("#htmlReplacementFile").value = "";
+  if ($("#htmlEditorDialog").open) $("#htmlEditorDialog").close();
+}
+async function closeHtmlEditor() {
+  const draft = htmlDraft;
+  if (!draft || draft.saving) return;
+  if (htmlEditorDirty() && !await confirmAction({ title: "放弃未保存的内容", message: "关闭后，本次修改或选择的替换文件将清除。", confirm: "放弃修改" })) return;
+  if (htmlDraft === draft && !draft.saving) resetHtmlEditor();
+}
+async function openEditor(page, mode = "source") {
+  if (!session || !page?.canEdit || page.deletedAt || htmlDraft) return;
+  const draft = htmlDraft = { page, mode, html: "", loading: true, saving: false, file: null, epoch: sessionEpoch };
+  $("#htmlEditorTitle").textContent = mode === "replace" ? "替换 HTML 文件" : "编辑 HTML";
+  $("#htmlEditorName").textContent = page.title || page.fileName;
+  $("#htmlSourceField").hidden = mode === "replace";
+  $("#htmlReplacementField").hidden = mode !== "replace";
+  $("#htmlSource").value = "";
+  $("#htmlReplacementFile").value = "";
+  $("#htmlReplacementName").textContent = "";
+  $("#htmlEditorError").hidden = true;
+  $("#htmlEditorStatus").textContent = "正在读取当前版本…";
+  $("#visualHtmlEditor").href = page.editUrl || `${page.url}?edit=1`;
+  $("#visualHtmlEditor").hidden = mode === "replace";
+  htmlEditorState();
+  $("#htmlEditorDialog").showModal();
+  try {
+    const data = await api(`/api/pages/${encodeURIComponent(page.id)}`);
+    if (htmlDraft !== draft || draft.epoch !== sessionEpoch) return;
+    if (!data.page.canEdit || data.page.deletedAt) throw new Error("该文档当前无法编辑，请刷新列表。");
+    draft.page = data.page;
+    $("#htmlSource").value = data.html;
+    draft.html = $("#htmlSource").value;
+    $("#htmlSource").setSelectionRange?.(0, 0);
+    $("#htmlSource").scrollTop = 0;
+    $("#htmlSource").scrollLeft = 0;
+    $("#htmlEditorStatus").textContent = `当前版本 ${data.page.revision}`;
+    $(mode === "replace" ? "#htmlReplacementFile" : "#htmlSource").focus();
+  } catch (error) {
+    if (htmlDraft !== draft || draft.epoch !== sessionEpoch) return;
+    $("#htmlEditorStatus").textContent = "读取失败，请关闭后重新打开。";
+    $("#htmlEditorError").textContent = error.message;
+    $("#htmlEditorError").hidden = false;
+    draft.failed = true;
+  } finally {
+    if (htmlDraft === draft) { draft.loading = false; htmlEditorState(); }
+  }
+}
+async function saveHtmlEditor(event) {
+  event?.preventDefault();
+  const draft = htmlDraft;
+  if (!draft || draft.loading || draft.saving || draft.failed || !htmlEditorDirty()) return;
+  const html = $("#htmlSource").value;
+  if (draft.mode !== "replace" && (!html.trim() || !/<[a-z][^>]*>/i.test(html))) {
+    $("#htmlEditorError").textContent = "请输入有效的 HTML 内容。";
+    $("#htmlEditorError").hidden = false;
+    return;
+  }
+  draft.saving = true;
+  htmlEditorState();
+  $("#htmlEditorError").hidden = true;
+  try {
+    let result;
+    const endpoint = `/api/pages/${encodeURIComponent(draft.page.id)}`;
+    if (draft.mode === "replace") {
+      const form = new FormData();
+      form.append("revision", String(draft.page.revision));
+      form.append("file", draft.file);
+      result = await api(`${endpoint}/replace`, { method: "POST", body: form });
+    } else {
+      result = await api(`${endpoint}/content`, json("PATCH", { html, revision: draft.page.revision, reason: "source-edit" }));
+    }
+    if (htmlDraft !== draft || draft.epoch !== sessionEpoch) return;
+    resetHtmlEditor();
+    toast(draft.mode === "replace" ? "HTML 已替换，原链接已更新" : "HTML 已保存");
+    pages = pages.map(page => page.id === result.page.id ? result.page : page);
+    renderRows();
+    if (previewPage?.id === result.page.id) {
+      previewPage = result.page;
+      $("#previewTitle").textContent = result.page.title;
+      $("#previewTitle").title = result.page.title;
+      $("#previewFrame").src = `${result.page.url}?v=${result.page.revision}`;
+      renderPreviewMeta();
+      if (!$("#previewVersions").hidden) renderVersions(result.page, $("#previewVersions"));
+    }
+    try { await loadList(); }
+    catch { if (draft.epoch === sessionEpoch) notice($("#globalError"), "内容已更新，列表刷新失败。请刷新列表查看。", "刷新列表"); }
+  } catch (error) {
+    if (htmlDraft !== draft || draft.epoch !== sessionEpoch) return;
+    $("#htmlEditorError").textContent = error.message;
+    $("#htmlEditorError").hidden = false;
+  } finally {
+    if (htmlDraft === draft) { draft.saving = false; htmlEditorState(); }
+  }
 }
 async function copyPage(page) {
   try {
@@ -724,6 +827,7 @@ function menuItems(page) {
     ...(page.canEdit
       ? [
           { label: "在线编辑", icon: "edit", run: () => openEditor(page) },
+          { label: "替换 HTML 文件", icon: "upload", run: () => openEditor(page, "replace") },
           { label: "版本记录", icon: "history", run: () => openHistory(page) },
         ]
       : []),
@@ -868,6 +972,7 @@ async function openPreview(id, push = true) {
     $("#previewTitle").textContent = page.title;
     $("#previewTitle").title = page.title;
     $("#editFromPreview").hidden = !page.canEdit;
+    $("#replaceFromPreview").hidden = !page.canEdit;
     $("#versionsTab").hidden = !page.canEdit;
     $("#previewInfo").hidden = true;
     $("#toggleInfo").setAttribute("aria-expanded", "false");
@@ -969,7 +1074,7 @@ async function renderVersions(page, target) {
       ? data.versions
           .map(
             (v) =>
-              `<article class="version-item"><strong>版本 ${Number(v.revision)} · ${esc(v.title)}</strong><p>${esc(formatDate(v.createdAt, true))} · ${esc(v.reason === "autosave" ? "自动保存" : v.reason === "manual" ? "手动保存" : v.reason.startsWith("restore-") ? "恢复前快照" : v.reason)}</p><button class="btn small" data-version="${esc(v.id)}" data-version-page="${esc(page.id)}" data-revision="${Number(v.revision)}">恢复此版本</button></article>`,
+              `<article class="version-item"><strong>版本 ${Number(v.revision)} · ${esc(v.title)}</strong><p>${esc(formatDate(v.createdAt, true))} · ${esc(v.reason === "autosave" ? "自动保存" : v.reason === "manual" ? "手动保存" : v.reason === "source-edit" ? "源码编辑前快照" : v.reason === "replace-file" ? "文件替换前快照" : v.reason.startsWith("restore-") ? "恢复前快照" : v.reason)}</p><button class="btn small" data-version="${esc(v.id)}" data-version-page="${esc(page.id)}" data-revision="${Number(v.revision)}">恢复此版本</button></article>`,
           )
           .join("")
       : '<div class="empty-state"><h3>暂无历史版本</h3><p>编辑保存后会自动保留先前内容的快照。</p></div>';
@@ -1945,6 +2050,34 @@ $("#emptyState").onclick = (event) => {
 };
 $("#closePreview").onclick = closePreview;
 $("#editFromPreview").onclick = () => openEditor(previewPage);
+$("#replaceFromPreview").onclick = () => openEditor(previewPage, "replace");
+$("#htmlEditorForm").onsubmit = saveHtmlEditor;
+$("#closeHtmlEditor").onclick = closeHtmlEditor;
+$("#cancelHtmlEditor").onclick = closeHtmlEditor;
+$("#htmlSource").oninput = () => {
+  if (!htmlDraft) return;
+  $("#htmlEditorStatus").textContent = `当前版本 ${htmlDraft.page.revision}${htmlEditorDirty() ? " · 有未保存的修改" : ""}`;
+  htmlEditorState();
+};
+$("#htmlReplacementFile").onchange = event => {
+  if (!htmlDraft || htmlDraft.loading || htmlDraft.saving) return;
+  htmlDraft.file = null;
+  const file = event.target.files[0];
+  const error = file && (!/\.html?$/i.test(file.name) ? "请选择 HTML 或 HTM 文件。" : !file.size ? "文件内容为空，请重新选择。" : file.size > 20 * 1024 * 1024 ? "HTML 文件最大为 20 MiB。" : "");
+  $("#htmlEditorError").textContent = error || "";
+  $("#htmlEditorError").hidden = !error;
+  if (file && !error) htmlDraft.file = file;
+  $("#htmlReplacementName").textContent = htmlDraft.file ? `${file.name} · ${formatSize(file.size)}` : "";
+  if (error) event.target.value = "";
+  htmlEditorState();
+};
+$("#htmlEditorDialog").addEventListener("keydown", event => {
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") saveHtmlEditor(event);
+});
+wireDialog($("#htmlEditorDialog"), closeHtmlEditor, () => Boolean(htmlDraft?.saving));
+window.addEventListener("beforeunload", event => {
+  if (htmlDraft?.saving || htmlEditorDirty()) { event.preventDefault(); event.returnValue = ""; }
+});
 $("#copyFromPreview").onclick = () => copyPage(previewPage);
 $("#previewMore").onclick = (event) =>
   openMenu(event.currentTarget, menuItems(previewPage));

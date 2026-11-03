@@ -154,21 +154,36 @@ export class DocumentAccess {
     // non-document files conservatively so mixed policies require separation.
     if (document.querySelector('script')) {
       const uploadRoot = path.join(root, path.relative(root,sourcePath).split(path.sep)[0]);
-      const walk = async directory => {
-        for (const entry of await fs.readdir(directory,{withFileTypes:true})) {
+      const walk = async (directory, entries) => {
+        for (const entry of entries || await fs.readdir(directory,{withFileTypes:true})) {
           const file = path.join(directory,entry.name);
           if (entry.isDirectory()) await walk(file);
           else if (entry.isFile() && !/\.(?:html?|pdf|docx?)$/i.test(file)) found.add(await fs.realpath(file));
         }
       };
-      await walk(uploadRoot);
+      let entries;
+      try { entries = await fs.readdir(uploadRoot, { withFileTypes: true }); }
+      catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
+      if (entries) await walk(uploadRoot, entries);
+      else {
+        const previous = this.db.prepare('SELECT r.resource_path FROM page_resources r JOIN pages p ON p.id=r.page_id WHERE p.source_path=?').all(sourcePath);
+        for (const resource of previous) found.add(resource.resource_path);
+      }
     }
     return [...found];
   }
   registerResources(id, resources) {
-    this.db.prepare('DELETE FROM page_resources WHERE page_id=?').run(id);
-    const insert = this.db.prepare('INSERT OR IGNORE INTO page_resources(page_id,resource_path) VALUES(?,?)');
-    for (const resource of resources) insert.run(id,resource);
+    this.db.exec('SAVEPOINT page_resource_write');
+    try {
+      this.db.prepare('DELETE FROM page_resources WHERE page_id=?').run(id);
+      const insert = this.db.prepare('INSERT OR IGNORE INTO page_resources(page_id,resource_path) VALUES(?,?)');
+      for (const resource of resources) insert.run(id,resource);
+      this.db.exec('RELEASE SAVEPOINT page_resource_write');
+    } catch (error) {
+      this.db.exec('ROLLBACK TO SAVEPOINT page_resource_write');
+      this.db.exec('RELEASE SAVEPOINT page_resource_write');
+      throw error;
+    }
   }
   async refreshResources(page, html) { this.registerResources(page.id, await this.resources(page.sourcePath, html)); }
   async seedResources() {

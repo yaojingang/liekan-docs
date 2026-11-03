@@ -767,3 +767,20 @@
 @media (prefers-reduced-motion: reduce) {
   .upload-dialog .upload-progress-bar.indeterminate { animation: none; background: var(--brand); }
 }
+.html-editor-dialog { width: min(1120px, calc(100vw - 32px)); }
+.html-editor-dialog .dialog-header > div { min-width: 0; }
+#htmlEditorName { overflow-wrap: anywhere; margin-top: 4px; }
+.html-editor-dialog .dialog-body { display: grid; gap: 16px; max-height: calc(90dvh - 210px); }
+#htmlSource { min-height: 240px; height: 48dvh; resize: vertical; padding: 14px; font: 12.5px/1.7 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; background: var(--canvas); }
+#htmlReplacementField { display: grid; gap: 12px; }
+#htmlReplacementFile { height: auto; padding: 12px; }
+.html-editor-dialog .dialog-footer { flex-wrap: wrap; }
+.html-editor-dialog .dialog-footer .hint { flex: 1 1 320px; }
+@media (max-width: 600px) {
+  .html-editor-dialog .dialog-header, .html-editor-dialog .dialog-body, .html-editor-dialog .dialog-footer { padding: 16px; }
+  .html-editor-dialog .dialog-body { max-height: calc(90dvh - 250px); }
+  .html-editor-dialog .dialog-footer .hint { flex-basis: 100%; }
+  .html-editor-dialog .dialog-footer .btn { min-height: 44px; flex: 1; padding-left: 8px; padding-right: 8px; }
+  #htmlSource { height: 38dvh; min-height: 160px; }
+  #htmlReplacementFile { min-height: 44px; }
+}

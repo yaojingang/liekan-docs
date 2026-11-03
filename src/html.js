@@ -205,5 +205,6 @@ export function removeEditBridge(html) {
     node.classList.remove('tokdoc-editable');
     node.classList.remove('tokhtml-editable');
   });
-  return `<!doctype html>\n${document.documentElement.outerHTML}`;
+  const content = [...document.childNodes].filter(node => node.nodeType !== 10).map(node => node.toString()).join("");
+  return `<!doctype html>\n${content}`;
 }

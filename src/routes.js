@@ -594,7 +594,35 @@ function registerApiRoutes(app, prefix = "") {
     return { page: publicPage(page) };
   });
 
-  app.patch(`${prefix}/api/pages/:id/content`, async (request, reply) => {
+  app.post(`${prefix}/api/pages/:id/replace`, async (request, reply) => {
+    try {
+      let file, revision;
+      for await (const part of request.parts({ limits: { files: 1, fields: 1, fileSize: 20 * 1024 * 1024 } })) {
+        if (part.type === "file") file = { fileName: part.filename, buffer: await part.toBuffer() };
+        else if (part.fieldname === "revision") revision = part.value;
+      }
+      if (!file) return reply.code(400).send({ error: "请选择要替换的 HTML 文件" });
+      const page = await app.store.replacePageHtml(request.params.id, { ...file, revision });
+      return { page: publicPage(page) };
+    } catch (error) {
+      if (error.code === "REVISION_CONFLICT") return reply.code(409).send({ error: "文档已更新，请重新打开替换窗口后重试", page: publicPage(error.page) });
+      if (error.code === "HTML_INVALID") return reply.code(error.statusCode).send({ error: error.message });
+      if (error.code === "DOCUMENT_NOT_EDITABLE") return reply.code(400).send({ error: "只有 HTML 文档支持替换文件" });
+      if (error.code === "DOCUMENT_ACCESS") return reply.code(error.statusCode).send({ error: error.message });
+      if (error.code === "NOT_FOUND") return sendNotFound(reply, error.message);
+      if (error.code === "FST_REQ_FILE_TOO_LARGE") return reply.code(413).send({ error: "HTML 文件最大为 20 MiB" });
+      if (["FST_FILES_LIMIT", "FST_FIELDS_LIMIT", "FST_INVALID_MULTIPART_CONTENT_TYPE"].includes(error.code)) return reply.code(400).send({ error: "每次请选择一个 HTML 文件" });
+      throw error;
+    }
+  });
+
+  app.patch(`${prefix}/api/pages/:id/content`, {
+    bodyLimit: 128 * 1024 * 1024,
+    onRequest: async (request, reply) => {
+      if (requestAccessState(app, request) === "not-found") return sendNotFound(reply);
+      if (!currentSession(app, request)) return reply.code(401).send({ error: "Unauthorized" });
+    },
+  }, async (request, reply) => {
     try {
       const page = await app.store.savePageContent(
         request.params.id,
@@ -605,10 +633,11 @@ function registerApiRoutes(app, prefix = "") {
       if (error.code === "REVISION_CONFLICT") {
         return reply
           .code(409)
-          .send({ error: "Revision conflict", page: publicPage(error.page) });
+          .send({ error: "文档已更新，请复制当前草稿后重新打开编辑窗口", page: publicPage(error.page) });
       }
       if (error.code === "DOCUMENT_NOT_EDITABLE")
         return reply.code(400).send({ error: error.message });
+      if (error.code === "HTML_INVALID") return reply.code(error.statusCode).send({ error: error.message });
       if (error.code === "DOCUMENT_ACCESS") return reply.code(error.statusCode).send({error:error.message});
       if (error.code === "NOT_FOUND") return sendNotFound(reply, error.message);
       throw error;
