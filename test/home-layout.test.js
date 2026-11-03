@@ -79,6 +79,7 @@ async function appHarness(fetchImpl, pathname = "/admin", timers = {}) {
     console,
     URL,
     URLSearchParams,
+    FormData,
     Date,
     setTimeout,
     clearTimeout,
@@ -116,7 +117,7 @@ async function appHarness(fetchImpl, pathname = "/admin", timers = {}) {
   source = source.slice(0, source.lastIndexOf("(async () => {"));
   vm.runInContext(
     source +
-      "\nglobalThis.testApp={openAccess,saveAccess,closeAccess,uploadReviewDocuments,startAuthenticated,loadList,showLogin,api,saveSettings,queryString,clearFilters,openPreview,renderVersions,restoreVersion,hidePreview,mutatePage,cancelUpload,confirmUpload,renderUploadReview,uploadWithProgress,addSamples,addWatchDir,reloadWatchDirs,setUpload(value){stagedUpload=value;},getUpload(){return stagedUpload;},setPages(value){pages=value;},setSession(value){session=value;},setPreview(page){previewPage=page;},setFilters(value){filters={...filters,...value};}};",
+      "\nglobalThis.testApp={openEditor,saveHtmlEditor,closeHtmlEditor,htmlEditorDirty,openAccess,saveAccess,closeAccess,uploadReviewDocuments,startAuthenticated,loadList,showLogin,api,saveSettings,queryString,clearFilters,openPreview,renderVersions,restoreVersion,hidePreview,mutatePage,cancelUpload,confirmUpload,renderUploadReview,uploadWithProgress,addSamples,addWatchDir,reloadWatchDirs,setUpload(value){stagedUpload=value;},getUpload(){return stagedUpload;},setPages(value){pages=value;},setSession(value){session=value;},setPreview(page){previewPage=page;},setFilters(value){filters={...filters,...value};}};",
     context,
   );
   return {
@@ -2026,4 +2027,109 @@ test("logo chooser resets before upload so the same file remains retryable after
   assert.equal(chooser.value, "");
   await app.startAuthenticated();
   assert.equal(chooser.value, "");
+});
+
+const htmlManagementPage = { id: "html-document", title: "测试报告", fileName: "report.html", canEdit: true, fileType: "html", revision: 3, url: "/abc123", editUrl: "/abc123?edit=1" };
+test("HTML source editor reads the latest revision and saves the draft once while preserving the preview", async () => {
+  const calls = [];
+  let finishSave;
+  const harness = await appHarness(async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith("/content")) return new Promise(resolve => { finishSave = () => resolve(response({ page: { ...htmlManagementPage, title: "新标题", revision: 4 } })); });
+    if (url.endsWith("/html-document")) return response({ page: htmlManagementPage, html: "<h1>已有内容</h1>" });
+    return response(listResult);
+  });
+  const { app, document } = harness;
+  app.setSession(true);
+  app.setPreview(htmlManagementPage);
+  await app.openEditor({ ...htmlManagementPage, revision: 1 });
+  const input = document.querySelector("#htmlSource");
+  assert.equal(input.value, "<h1>已有内容</h1>");
+  assert.equal(document.querySelector("#saveHtmlEditor").disabled, true);
+  input.value = "<h1>已编辑内容</h1>";
+  input.oninput();
+  const pending = app.saveHtmlEditor();
+  await app.saveHtmlEditor();
+  assert.equal(document.querySelector("#closeHtmlEditor").disabled, true);
+  assert.equal(calls.filter(call => call.url.endsWith("/content")).length, 1);
+  assert.equal(JSON.parse(calls.find(call => call.url.endsWith("/content")).options.body).revision, 3);
+  finishSave();
+  await pending;
+  assert.equal(document.querySelector("#htmlEditorDialog").open, false);
+  assert.equal(document.querySelector("#previewTitle").textContent, "新标题");
+  assert.equal(document.querySelector("#previewFrame").getAttribute("src"), "/abc123?v=4");
+});
+
+test("HTML editor keeps conflicting drafts and ignores late reads after it closes", async () => {
+  const { app, document } = await appHarness(async (url) => url.endsWith("/content") ? response({ error: "文档已更新" }, 409) : response({ page: htmlManagementPage, html: "<h1>原稿</h1>" }));
+  app.setSession(true);
+  await app.openEditor(htmlManagementPage);
+  document.querySelector("#htmlSource").value = "<h1>待保留草稿</h1>";
+  await app.saveHtmlEditor();
+  assert.equal(document.querySelector("#htmlSource").value, "<h1>待保留草稿</h1>");
+  assert.equal(document.querySelector("#htmlEditorDialog").open, true);
+  assert.match(document.querySelector("#htmlEditorError").textContent, /文档已更新/);
+  await app.closeHtmlEditor();
+  let finish;
+  const late = await appHarness(() => new Promise(resolve => { finish = resolve; }));
+  late.app.setSession(true);
+  const opening = late.app.openEditor(htmlManagementPage);
+  await late.app.closeHtmlEditor();
+  finish(response({ page: htmlManagementPage, html: "<h1>迟到的内容</h1>" }));
+  await opening;
+  assert.equal(late.document.querySelector("#htmlEditorDialog").open, false);
+  assert.equal(late.document.querySelector("#htmlSource").value, "");
+});
+
+test("HTML replacement validates the selected file and submits a multipart request for the current document", async () => {
+  let uploaded;
+  const { app, document } = await appHarness(async (url, options) => {
+    if (url.endsWith("/replace")) { uploaded = options.body; return response({ page: { ...htmlManagementPage, revision: 4 } }); }
+    if (url.endsWith("/html-document")) return response({ page: htmlManagementPage, html: "<h1>原稿</h1>" });
+    return response(listResult);
+  });
+  app.setSession(true);
+  await app.openEditor(htmlManagementPage, "replace");
+  const input = document.querySelector("#htmlReplacementFile");
+  input.onchange({ target: { files: [new File(["bad"], "wrong.pdf")], value: "wrong.pdf" } });
+  assert.equal(document.querySelector("#saveHtmlEditor").disabled, true);
+  assert.match(document.querySelector("#htmlEditorError").textContent, /HTML/);
+  input.onchange({ target: { files: [new File(["<h1>新文件</h1>"], "new.htm")], value: "new.htm" } });
+  assert.equal(document.querySelector("#saveHtmlEditor").disabled, false);
+  await app.saveHtmlEditor();
+  assert.equal(uploaded.get("revision"), "3");
+  assert.equal(uploaded.get("file").name, "new.htm");
+  assert.equal(document.querySelector("#htmlEditorDialog").open, false);
+});
+
+test("HTML editor clears drafts on session expiry and ignores a late successful save", async () => {
+  let finish;
+  const { app, document } = await appHarness(async (url) => url.endsWith("/content") ? new Promise(resolve => { finish = resolve; }) : response({ page: htmlManagementPage, html: "<h1>原稿</h1>" }));
+  app.setSession(true);
+  await app.openEditor(htmlManagementPage);
+  document.querySelector("#htmlSource").value = "<h1>修改</h1>";
+  const pending = app.saveHtmlEditor();
+  app.showLogin();
+  app.setSession(true);
+  finish(response({ page: { ...htmlManagementPage, revision: 4 } }));
+  await pending;
+  assert.equal(document.querySelector("#htmlSource").value, "");
+  assert.equal(document.querySelector("#htmlEditorDialog").open, false);
+  assert.equal(document.querySelector("#previewFrame").hasAttribute("src"), false);
+});
+
+test("opening Windows and classic Mac HTML line endings does not create an unsaved draft", async () => {
+  for (const newline of ["\r\n", "\r"]) {
+    const html = `<html>${newline}<body><h1>未修改</h1></body>${newline}</html>`;
+    const { app, document } = await appHarness(async () => response({ page: htmlManagementPage, html }));
+    const input = document.querySelector("#htmlSource");
+    let value = "";
+    Object.defineProperty(input, "value", { get: () => value, set: next => { value = String(next).replace(/\r\n?/g, "\n"); } });
+    app.setSession(true);
+    await app.openEditor(htmlManagementPage);
+    assert.equal(app.htmlEditorDirty(), false);
+    assert.equal(document.querySelector("#saveHtmlEditor").disabled, true);
+    await app.closeHtmlEditor();
+    assert.equal(document.querySelector("#htmlEditorDialog").open, false);
+  }
 });

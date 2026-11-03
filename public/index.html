@@ -6,7 +6,7 @@
     <title>猎看文档系统</title>
     <link rel="stylesheet" href="/assets/styles/tokens.css?v=20261025-brand1" />
     <link rel="stylesheet" href="/assets/styles/components.css?v=20261009" />
-    <link rel="stylesheet" href="/assets/styles/admin.css?v=20261027-trend-tooltip1" />
+    <link rel="stylesheet" href="/assets/styles/admin.css?v=20261103-html1" />
   </head>
   <body class="lkdoc admin-page" data-auth="loading">
     <div class="boot-screen" id="bootScreen" role="status">正在加载工作台…</div>
@@ -647,7 +647,7 @@
                 type="button"
               >
                 <span data-icon="edit"></span>在线编辑</button
-              ><button
+              ><button class="btn small" id="replaceFromPreview" type="button">替换 HTML</button><button
                 class="btn small reader-secondary"
                 id="copyFromPreview"
                 type="button"
@@ -828,6 +828,18 @@
         <button class="btn primary" id="viewUploadedDocuments" type="button" hidden>查看文档</button>
       </div>
     </dialog>
+    <dialog class="dialog html-editor-dialog" id="htmlEditorDialog" aria-labelledby="htmlEditorTitle" aria-describedby="htmlEditorNote">
+      <div class="dialog-header"><div><h2 id="htmlEditorTitle">编辑 HTML</h2><p class="hint" id="htmlEditorName"></p></div><button class="btn icon-btn" id="closeHtmlEditor" type="button" aria-label="关闭 HTML 编辑窗口"><span data-icon="close"></span></button></div>
+      <form id="htmlEditorForm">
+        <div class="dialog-body">
+          <p class="hint" id="htmlEditorStatus" role="status" aria-live="polite"></p>
+          <label class="field" id="htmlSourceField"><span>HTML 源码</span><textarea id="htmlSource" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="htmlEditorNote"></textarea></label>
+          <div id="htmlReplacementField" hidden><label class="field"><span>选择新 HTML 文件</span><input id="htmlReplacementFile" type="file" accept=".html,.htm,text/html" /></label><p class="hint">支持 UTF-8 编码的 HTML / HTM，最大 20 MiB。原目录附件继续保留，新文件中的相对路径应与原目录一致。</p><p class="hint" id="htmlReplacementName"></p></div>
+          <p class="field-error" id="htmlEditorError" role="alert" hidden></p>
+        </div>
+        <div class="dialog-footer"><p class="hint" id="htmlEditorNote">保存后立即更新，原链接和权限保留，旧内容可在版本记录中恢复。</p><a class="btn" id="visualHtmlEditor" target="_blank" rel="noopener noreferrer">页面内编辑</a><button class="btn" id="cancelHtmlEditor" type="button">取消</button><button class="btn primary" id="saveHtmlEditor" type="submit">保存 HTML</button></div>
+      </form>
+    </dialog>
     <dialog class="dialog access-settings-dialog" id="accessDialog" aria-labelledby="accessTitle">
       <div class="dialog-header"><div><h2 id="accessTitle">文档访问设置</h2><p class="hint" id="accessDocumentName"></p></div><button class="btn icon-btn" id="closeAccess" type="button" aria-label="关闭访问设置"><span data-icon="close"></span></button></div>
       <form id="accessForm">
@@ -875,6 +887,6 @@
       </div>
     </dialog>
     <div class="toast" id="toast" role="status" hidden></div>
-    <script type="module" src="/assets/app.js?v=20261027-integrated1"></script>
+    <script type="module" src="/assets/app.js?v=20261103-html2"></script>
   </body>
 </html>

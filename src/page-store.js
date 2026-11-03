@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { parseHTML } from "linkedom";
 import {
   basenameWithoutExtension,
   checksum,
@@ -107,6 +108,51 @@ async function pathExists(filePath) {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function writeHtmlAtomically(filePath, content, expectedWrite) {
+  const temporaryPath = `${filePath}.${crypto.randomUUID()}.tmp`;
+  try {
+    let mode = 0o600;
+    let existing;
+    try { existing = await fs.stat(filePath); mode = existing.mode & 0o777; }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    await fs.writeFile(temporaryPath, content, { flag: "wx", mode });
+    if (existing) {
+      const staged = await fs.stat(temporaryPath);
+      if (staged.uid !== existing.uid || staged.gid !== existing.gid) await fs.chown(temporaryPath, existing.uid, existing.gid);
+    }
+    await fs.chmod(temporaryPath, mode);
+    const installed = await fs.stat(temporaryPath);
+    if (expectedWrite && !await matchesHtmlWrite(filePath, expectedWrite.installed, expectedWrite.content)) return;
+    await fs.rename(temporaryPath, filePath);
+    return installed;
+  } finally {
+    await fs.rm(temporaryPath, { force: true });
+  }
+}
+
+async function matchesHtmlWrite(filePath, installed, content) {
+  try {
+    const current = await fs.stat(filePath);
+    return current.dev === installed.dev && current.ino === installed.ino && (await fs.readFile(filePath)).equals(Buffer.from(content));
+  } catch (error) {
+    if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error;
+    return false;
+  }
+}
+
+async function rollbackHtmlWrite(filePath, previousContent, installed, writtenContent) {
+  if (!installed) return;
+  try {
+    if (previousContent === undefined) {
+      if (await matchesHtmlWrite(filePath, installed, writtenContent)) await fs.unlink(filePath);
+    } else {
+      await writeHtmlAtomically(filePath, previousContent, { installed, content: writtenContent });
+    }
+  } catch (error) {
+    if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error;
   }
 }
 
@@ -325,7 +371,20 @@ export class PageStore {
     this.db = db;
     this.access = new DocumentAccess(this);
     this.analytics = new PageAnalytics(db);
-    this.writingPages = new Set();
+    this.pageWrites = new Map();
+  }
+
+  async withPageWrite(id, write) {
+    const previous = this.pageWrites.get(id) || Promise.resolve();
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    this.pageWrites.set(id, pending);
+    await previous;
+    try { return await write(); }
+    finally {
+      release();
+      if (this.pageWrites.get(id) === pending) this.pageWrites.delete(id);
+    }
   }
 
   async ensureStorage() {
@@ -1587,6 +1646,11 @@ export class PageStore {
   }
 
   async upsertWatchedFile(filePath) {
+    const row = this.db.prepare("SELECT id FROM pages WHERE source_path = ? ORDER BY deleted_at IS NULL DESC LIMIT 1").get(path.resolve(filePath));
+    return this.withPageWrite(row?.id || `watch:${path.resolve(filePath)}`, () => this.upsertWatchedFileUnlocked(filePath));
+  }
+
+  async upsertWatchedFileUnlocked(filePath) {
     if (!isHtmlFile(filePath)) return null;
     const absolutePath = path.resolve(filePath);
     const stat = await fs.stat(absolutePath);
@@ -1642,6 +1706,12 @@ export class PageStore {
   }
 
   async markSourceDeleted(filePath) {
+    const row = this.db.prepare("SELECT id FROM pages WHERE source_path = ? ORDER BY deleted_at IS NULL DESC LIMIT 1").get(path.resolve(filePath));
+    if (!row) return null;
+    return this.withPageWrite(row.id, () => this.markSourceDeletedUnlocked(filePath));
+  }
+
+  async markSourceDeletedUnlocked(filePath) {
     const absolutePath = path.resolve(filePath);
     const row = this.db
       .prepare(
@@ -1649,6 +1719,9 @@ export class PageStore {
       )
       .get(absolutePath);
     if (!row) return null;
+    if (row.deleted_at) return rowToPage(row);
+    try { await fs.stat(absolutePath); return rowToPage(row); }
+    catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
     const now = nowIso();
     this.db
       .prepare("UPDATE pages SET status = ?, updated_at = ? WHERE id = ?")
@@ -1657,10 +1730,18 @@ export class PageStore {
   }
 
   async savePageContent(id, options) {
-    if (this.writingPages.has(id)) throw Object.assign(new Error("Revision conflict"), {code:"REVISION_CONFLICT",page:this.getPage(id)});
-    this.writingPages.add(id);
-    try { return await this.savePageContentUnlocked(id, options); }
-    finally { this.writingPages.delete(id); }
+    return this.withPageWrite(id, () => this.savePageContentUnlocked(id, options));
+  }
+
+  async replacePageHtml(id, { fileName, buffer, revision }) {
+    if (!isHtmlFile(fileName || "") || !Buffer.isBuffer(buffer))
+      throw Object.assign(new Error("请选择 HTML 或 HTM 文件"), { code: "HTML_INVALID", statusCode: 400 });
+    if (!Number.isSafeInteger(Number(revision)) || Number(revision) < 1)
+      throw Object.assign(new Error("请先重新打开替换窗口，读取文档的当前版本"), { code: "HTML_INVALID", statusCode: 400 });
+    let html;
+    try { html = new TextDecoder("utf-8", { fatal: true }).decode(buffer); }
+    catch { throw Object.assign(new Error("请将 HTML 文件保存为 UTF-8 编码后重试"), { code: "HTML_INVALID", statusCode: 400 }); }
+    return this.savePageContent(id, { html, revision: Number(revision), reason: "replace-file" });
   }
 
   async savePageContentUnlocked(
@@ -1684,11 +1765,17 @@ export class PageStore {
       error.page = page;
       throw error;
     }
+    if (html != null && (typeof html !== "string" || !html.trim() || html.includes("\0") || !/<[a-z][^>]*>/i.test(html)))
+      throw Object.assign(new Error("请输入有效的 HTML 内容"), { code: "HTML_INVALID", statusCode: 400 });
+    if (html != null && Buffer.byteLength(html) > 20 * 1024 * 1024)
+      throw Object.assign(new Error("HTML 内容最大为 20 MiB"), { code: "HTML_INVALID", statusCode: 413 });
     const currentContent = await this.readPageHtml(page);
-    await this.writeVersion(page, currentContent, reason);
-    const nextContent = removeEditBridge(
+    let nextContent = removeEditBridge(
       html || composeDocument(title || page.title, body || ""),
     );
+    const currentBase = parseHTML(currentContent).document.querySelector("base[data-tokdoc-base],base[data-tokhtml-base]")?.getAttribute("href");
+    if (currentBase) nextContent = injectAssetBase(nextContent, currentBase);
+    nextContent = injectTrackingCode(nextContent, this.getSettings().trackingCode);
     const owned = await this.access.resources(page.sourcePath, nextContent);
     const livePolicy = this.access.row(id);
     if (!livePolicy || livePolicy.deleted_at) throw Object.assign(new Error("Page not found"), {code:"NOT_FOUND"});
@@ -1696,35 +1783,58 @@ export class PageStore {
     const previousResources = this.db.prepare("SELECT resource_path FROM page_resources WHERE page_id=?").all(id).map(row=>row.resource_path);
     // Reserve dependencies before yielding to filesystem writes.
     this.access.registerResources(id, [...new Set([...previousResources,...owned])]);
-    let contentWritten = false;
+    let generatedWrite, sourceWrite, generatedPath;
+    let previousSource;
     try {
-    const parsed = parseHtmlMetadata(nextContent, page.fileName);
-    const generatedPath = await this.resolveGeneratedPath(page);
-    await fs.writeFile(generatedPath, nextContent);
-    contentWritten = true;
-    const watchDir = this.watchDirForPath(page.sourcePath);
-    if (page.sourceType === "watch" && watchDir?.allowWrite) {
-      await fs.writeFile(page.sourcePath, nextContent);
-    }
-    const now = nowIso();
-    this.db
-      .prepare(
-        `UPDATE pages SET title = ?, size = ?, status = ?, updated_at = ?, revision = revision + 1, generated_path = ?,
-         checksum = ?, edited = 1 WHERE id = ?`,
-      )
-      .run(
-        parsed.title,
-        Buffer.byteLength(nextContent),
-        "edited",
-        now,
-        generatedPath,
-        checksum(nextContent),
-        id,
-      );
-    this.access.registerResources(id, owned);
-    return this.getPage(id);
+      const parsed = parseHtmlMetadata(nextContent, page.fileName);
+      generatedPath = await this.resolveGeneratedPath(page);
+      const watchDir = this.watchDirForPath(page.sourcePath);
+      const writeSource = page.sourcePath && ((reason === "replace-file" && page.sourceType === "upload" && await pathExists(path.dirname(page.sourcePath))) || (page.sourceType === "watch" && watchDir?.allowWrite));
+      if (writeSource) {
+        try { previousSource = await fs.readFile(page.sourcePath); }
+        catch (error) { if (error.code !== "ENOENT") throw error; }
+      }
+      await this.writeVersion(page, currentContent, reason);
+      const current = this.getPage(id);
+      if (!current || current.deletedAt) throw Object.assign(new Error("Page not found"), { code: "NOT_FOUND" });
+      if (current.revision !== page.revision) throw Object.assign(new Error("Revision conflict"), { code: "REVISION_CONFLICT", page: current });
+      this.access.conflict(id, { visibility: current.visibility, accessPasswordHash: this.access.row(id).access_password_hash }, owned);
+      if (writeSource) {
+        sourceWrite = await writeHtmlAtomically(page.sourcePath, nextContent);
+      }
+      const sourceMtime = writeSource ? Math.round((await fs.stat(page.sourcePath)).mtimeMs) : page.rawMtimeMs;
+      generatedWrite = await writeHtmlAtomically(generatedPath, nextContent);
+      const now = nowIso();
+      this.db.exec("SAVEPOINT html_content_write");
+      try {
+        this.db
+          .prepare(
+            `UPDATE pages SET title = ?, size = ?, status = ?, updated_at = ?, revision = revision + 1, generated_path = ?,
+             checksum = ?, raw_mtime_ms = ?, edited = 1 WHERE id = ?`,
+          )
+          .run(
+            parsed.title,
+            Buffer.byteLength(nextContent),
+            "edited",
+            now,
+            generatedPath,
+            page.sourceType === "watch" && !writeSource ? page.checksum : checksum(nextContent),
+            sourceMtime,
+            id,
+          );
+        this.access.registerResources(id, owned);
+        const saved = this.getPage(id);
+        this.db.exec("RELEASE SAVEPOINT html_content_write");
+        return saved;
+      } catch (error) {
+        this.db.exec("ROLLBACK TO SAVEPOINT html_content_write");
+        this.db.exec("RELEASE SAVEPOINT html_content_write");
+        throw error;
+      }
     } catch (error) {
-      if (!contentWritten) this.access.registerResources(id, previousResources);
+      await rollbackHtmlWrite(generatedPath, currentContent, generatedWrite, nextContent);
+      await rollbackHtmlWrite(page.sourcePath, previousSource, sourceWrite, nextContent);
+      this.access.registerResources(id, previousResources);
       throw error;
     }
   }
@@ -1813,6 +1923,10 @@ export class PageStore {
   }
 
   async deletePage(id) {
+    return this.withPageWrite(id, () => this.deletePageUnlocked(id));
+  }
+
+  async deletePageUnlocked(id) {
     const page = this.getPage(id);
     if (!page) return null;
     if (page.deletedAt) return page;
@@ -1839,6 +1953,10 @@ export class PageStore {
   }
 
   async restoreDeletedPage(id) {
+    return this.withPageWrite(id, () => this.restoreDeletedPageUnlocked(id));
+  }
+
+  async restoreDeletedPageUnlocked(id) {
     const page = this.getPage(id);
     if (!page) return null;
     if (!page.deletedAt) return page;

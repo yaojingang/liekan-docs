@@ -9,7 +9,7 @@
 - **文档首页**：顶部 LOGO 与导航、居中搜索、可点击分类的公开文档统计和最近更新的 6 份文档。
 - **资源列表**：按名称或文件名搜索，支持分类、排序和分页；显示资源名称、更新日期、类型、操作，日期格式为 `YYYY-MM-DD`，整行可点击阅读。
 - **上传工作区**：上传单个或多个文件，或导入含图片、CSS、JS 的目录；在当前页的居中宽屏弹窗内核对信息、设置权限并确认入库，完成后可直接打开文档或继续上传。单个文件最大 20 MiB。
-- **HTML 编辑**：在原文页面内编辑、自动保存、记录版本并恢复历史内容。
+- **HTML 编辑与替换**：后台可直接修改 HTML 源码，也可进入原文页面内编辑；支持上传 HTML / HTM 文件替换当前内容，保留原链接、访问权限与历史版本。
 - **PDF 和 Word 阅读**：PDF 直接打开阅读器，Word 先转换为 PDF；这两类文档不提供 HTML 在线编辑和版本恢复。
 - **访问控制**：首页可见、仅链接可见、私有三种访问方式，公开文档可另设阅读密码。
 - **后台管理**：目录监听、回收站与恢复、站点与 SEO 设置、统计代码、自定义后台地址，以及 HTML 向同类服务同步。
@@ -70,7 +70,9 @@ TOKDOC_INITIAL_USERNAME=admin TOKDOC_INITIAL_PASSWORD='replace-with-a-long-passw
 2. 在当前页弹窗中核对标题、文件名与访问设置，点击“确认入库”。取消会清理本次暂存；若提示结果需要核对，先检查已入库列表。
 3. 入库完成后，弹窗显示结果，可打开文档、继续上传，或点击“查看文档”进入管理列表并复制短链接。关闭结果弹窗会返回原页面。前台列表和推荐只包含首页可见的公开文档。
 4. HTML 可从后台进入编辑模式，编辑后自动保存并保留版本。PDF 和 Word 使用阅读器打开。文档列表的“更多 → 下载源文件”可按原文件名下载上传或监听目录中的原件，Word 保留原始 DOC/DOCX 格式；示例文档下载其生成文件。下载需要管理员登录，源文件缺失时会提示无法下载。
-5. “移入回收站”会暂停原链接访问；恢复文档后可继续访问。删除和恢复不等同于恢复编辑版本。
+5. 在阅读页点击“在线编辑”，或在列表的“更多 → 在线编辑”中打开源码编辑器，修改后点击“保存 HTML”（也支持 Ctrl / ⌘ + Enter）。编辑器内的“页面内编辑”继续提供原文可视化编辑与自动保存。
+6. 在阅读页点击“替换 HTML”，或使用“更多 → 替换 HTML 文件”，选择 UTF-8 编码的 HTML / HTM 文件（最大 20 MiB）并确认，即可更新原文档。原短链接、文件名、入库时间、权限和浏览量保留，标题随新 HTML 更新；旧内容可在版本记录中恢复。原目录附件继续保留，相对资源路径沿用原目录。上传 HTML 的源文件随文件替换更新，“下载源文件”得到最近上传或替换的原件；源码编辑和版本恢复更新站内阅读版本。源目录已丢失时仍可更新站内内容。监听文档按目录的写回设置更新源文件，只读目录仅更新站内内容，外部文件变化后仍会同步入库。
+7. “移入回收站”会暂停原链接访问；恢复文档后可继续访问。删除和恢复不等同于恢复编辑版本。
 
 “系统设置”使用顶部 Tab 分组，保存按钮会保存各分组的当前设置。目录添加、扫描和移除独立执行，移除监听不会删除已经生成的文档。
 
@@ -134,7 +136,7 @@ GitHub Actions 会在推送 `main` 或提交 Pull Request 时运行 Node.js 22 �
 | 文档 | `GET /admin/api/pages`、`GET /admin/api/pages/:id` |
 | 上传 | `POST /admin/api/pages/upload/prepare`、`POST /admin/api/pages/upload/:uploadId/confirm` |
 | 访问设置 | `PATCH /admin/api/pages/:id/access`、`POST /admin/api/pages/:id/access/revoke` |
-| 编辑与版本 | `PATCH /admin/api/pages/:id/content`、`GET /admin/api/pages/:id/versions` |
+| 编辑与版本 | `PATCH /admin/api/pages/:id/content`、`POST /admin/api/pages/:id/replace`、`GET /admin/api/pages/:id/versions` |
 | 设置与目录 | `/admin/api/settings`、`/admin/api/watch-dirs` |
 | 浏览分析 | `GET /admin/api/analytics?days=30&timeZone=Asia%2FShanghai`；完整排行使用 `GET /admin/api/analytics/rankings?mode=total&page=1&timeZone=Asia%2FShanghai`，`mode` 支持 `total`、`today` |
 | 公开列表 | `GET /public/api/pages` |
