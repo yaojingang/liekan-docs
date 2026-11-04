@@ -671,18 +671,44 @@ function htmlEditorDirty() {
   return htmlDraft && (htmlDraft.mode === "replace" ? Boolean(htmlDraft.file) : $("#htmlSource").value !== htmlDraft.html);
 }
 function htmlEditorState() {
-  const locked = !htmlDraft || htmlDraft.loading || htmlDraft.saving || htmlDraft.failed;
+  const locked = Boolean(!htmlDraft || htmlDraft.loading || htmlDraft.saving || htmlDraft.failed);
+  const pickerLocked = Boolean(!htmlDraft || htmlDraft.saving || htmlDraft.failed);
+  const file = htmlDraft?.file;
+  $("#htmlReplacementDropzone .html-replacement-icon").innerHTML = icon(file ? "document" : "upload");
   for (const id of ["closeHtmlEditor", "cancelHtmlEditor"]) $("#" + id).disabled = Boolean(htmlDraft?.saving);
-  $("#htmlReplacementFile").disabled = locked;
+  for (const id of ["htmlReplacementFile", "chooseHtmlReplacement", "clearHtmlReplacement"]) $("#" + id).disabled = pickerLocked;
+  $("#htmlReplacementDropzone").classList.toggle("has-file", Boolean(file));
+  $("#htmlReplacementDropzone").classList.toggle("is-disabled", pickerLocked);
+  $("#htmlReplacementName").textContent = file ? file.name : "选择或拖入 HTML 文件";
+  $("#htmlReplacementName").title = file?.name || "";
+  $("#htmlReplacementDetails").textContent = file ? formatSize(file.size) + " · 已选择" : "HTML / HTM · UTF-8 · 最大 20 MiB";
+  $("#chooseHtmlReplacement").textContent = file ? "重新选择" : "选择文件";
+  $("#clearHtmlReplacement").hidden = !file;
   $("#htmlSource").readOnly = locked;
   $("#saveHtmlEditor").disabled = locked || !htmlEditorDirty();
-  $("#saveHtmlEditor").textContent = htmlDraft?.saving ? "保存中…" : htmlDraft?.mode === "replace" ? "确认替换" : "保存 HTML";
+  const replacing = htmlDraft?.mode === "replace";
+  $("#saveHtmlEditor").textContent = htmlDraft?.saving ? (replacing ? "替换中…" : "保存中…") : replacing ? "确认替换" : "保存 HTML";
+  $("#htmlEditorStatus").classList.toggle("is-busy", Boolean(htmlDraft?.loading || htmlDraft?.saving));
+  $("#htmlEditorStatus").textContent = !htmlDraft ? "" : htmlDraft.failed ? "读取失败" : htmlDraft.loading ? (replacing ? "正在确认当前版本…" : "正在读取当前版本…") : htmlDraft.saving ? (replacing ? "正在上传并替换…" : "正在保存…") : `当前版本 ${htmlDraft.page.revision}${!replacing && htmlEditorDirty() ? " · 有未保存的修改" : ""}`;
   $("#htmlEditorForm").setAttribute("aria-busy", String(Boolean(htmlDraft?.loading || htmlDraft?.saving)));
+}
+function selectHtmlReplacement(files) {
+  if (!htmlDraft || htmlDraft.mode !== "replace" || htmlDraft.saving || htmlDraft.failed) return;
+  const selected = [...files];
+  if (!selected.length) return;
+  const file = selected[0];
+  const error = selected.length !== 1 ? "每次请选择一个 HTML 文件。" : !/\.html?$/i.test(file.name) ? "请选择 HTML 或 HTM 文件。" : !file.size ? "文件内容为空，请重新选择。" : file.size > 20 * 1024 * 1024 ? "HTML 文件最大为 20 MiB。" : "";
+  htmlDraft.file = error ? null : file;
+  $("#htmlReplacementFile").value = "";
+  $("#htmlEditorError").textContent = error;
+  $("#htmlEditorError").hidden = !error;
+  htmlEditorState();
 }
 function resetHtmlEditor() {
   htmlDraft = null;
   $("#htmlSource").value = "";
   $("#htmlReplacementFile").value = "";
+  $("#htmlReplacementDropzone").classList.remove("is-dragover");
   if ($("#htmlEditorDialog").open) $("#htmlEditorDialog").close();
 }
 async function closeHtmlEditor() {
@@ -694,34 +720,36 @@ async function closeHtmlEditor() {
 async function openEditor(page, mode = "source") {
   if (!session || !page?.canEdit || page.deletedAt || htmlDraft) return;
   const draft = htmlDraft = { page, mode, html: "", loading: true, saving: false, file: null, epoch: sessionEpoch };
+  $("#htmlEditorDialog").classList.toggle("html-replacement-dialog", mode === "replace");
   $("#htmlEditorTitle").textContent = mode === "replace" ? "替换 HTML 文件" : "编辑 HTML";
   $("#htmlEditorName").textContent = page.title || page.fileName;
   $("#htmlSourceField").hidden = mode === "replace";
   $("#htmlReplacementField").hidden = mode !== "replace";
   $("#htmlSource").value = "";
   $("#htmlReplacementFile").value = "";
-  $("#htmlReplacementName").textContent = "";
+  $("#htmlReplacementDropzone").classList.remove("is-dragover");
   $("#htmlEditorError").hidden = true;
   $("#htmlEditorStatus").textContent = "正在读取当前版本…";
   $("#visualHtmlEditor").href = page.editUrl || `${page.url}?edit=1`;
   $("#visualHtmlEditor").hidden = mode === "replace";
   htmlEditorState();
   $("#htmlEditorDialog").showModal();
+  if (mode === "replace") $("#chooseHtmlReplacement").focus();
   try {
-    const data = await api(`/api/pages/${encodeURIComponent(page.id)}`);
+    const data = await api(`/api/pages/${encodeURIComponent(page.id)}${mode === "replace" ? "/metadata" : ""}`);
     if (htmlDraft !== draft || draft.epoch !== sessionEpoch) return;
     if (!data.page.canEdit || data.page.deletedAt) throw new Error("该文档当前无法编辑，请刷新列表。");
     draft.page = data.page;
-    $("#htmlSource").value = data.html;
-    draft.html = $("#htmlSource").value;
-    $("#htmlSource").setSelectionRange?.(0, 0);
-    $("#htmlSource").scrollTop = 0;
-    $("#htmlSource").scrollLeft = 0;
-    $("#htmlEditorStatus").textContent = `当前版本 ${data.page.revision}`;
-    $(mode === "replace" ? "#htmlReplacementFile" : "#htmlSource").focus();
+    if (mode !== "replace") {
+      $("#htmlSource").value = data.html;
+      draft.html = $("#htmlSource").value;
+      $("#htmlSource").setSelectionRange?.(0, 0);
+      $("#htmlSource").scrollTop = 0;
+      $("#htmlSource").scrollLeft = 0;
+      $("#htmlSource").focus();
+    }
   } catch (error) {
     if (htmlDraft !== draft || draft.epoch !== sessionEpoch) return;
-    $("#htmlEditorStatus").textContent = "读取失败，请关闭后重新打开。";
     $("#htmlEditorError").textContent = error.message;
     $("#htmlEditorError").hidden = false;
     draft.failed = true;
@@ -949,7 +977,7 @@ async function openPreview(id, push = true) {
   try {
     const page =
       pages.find((p) => p.id === id) ||
-      (await api(`/api/pages/${encodeURIComponent(id)}`)).page;
+      (await api(`/api/pages/${encodeURIComponent(id)}/metadata`)).page;
     if (serial !== previewSerial || !session) return;
     if (page.deletedAt) throw new Error("文档已进入回收站，请先恢复。");
     if (push) {
@@ -2056,20 +2084,32 @@ $("#closeHtmlEditor").onclick = closeHtmlEditor;
 $("#cancelHtmlEditor").onclick = closeHtmlEditor;
 $("#htmlSource").oninput = () => {
   if (!htmlDraft) return;
-  $("#htmlEditorStatus").textContent = `当前版本 ${htmlDraft.page.revision}${htmlEditorDirty() ? " · 有未保存的修改" : ""}`;
   htmlEditorState();
 };
-$("#htmlReplacementFile").onchange = event => {
-  if (!htmlDraft || htmlDraft.loading || htmlDraft.saving) return;
+$("#htmlReplacementFile").onchange = event => selectHtmlReplacement(event.target.files);
+$("#chooseHtmlReplacement").onclick = () => $("#htmlReplacementFile").click();
+$("#clearHtmlReplacement").onclick = () => {
+  if (!htmlDraft || htmlDraft.saving || htmlDraft.failed) return;
   htmlDraft.file = null;
-  const file = event.target.files[0];
-  const error = file && (!/\.html?$/i.test(file.name) ? "请选择 HTML 或 HTM 文件。" : !file.size ? "文件内容为空，请重新选择。" : file.size > 20 * 1024 * 1024 ? "HTML 文件最大为 20 MiB。" : "");
-  $("#htmlEditorError").textContent = error || "";
-  $("#htmlEditorError").hidden = !error;
-  if (file && !error) htmlDraft.file = file;
-  $("#htmlReplacementName").textContent = htmlDraft.file ? `${file.name} · ${formatSize(file.size)}` : "";
-  if (error) event.target.value = "";
+  $("#htmlReplacementFile").value = "";
+  $("#htmlEditorError").hidden = true;
   htmlEditorState();
+  $("#chooseHtmlReplacement").focus();
+};
+$("#htmlReplacementDropzone").ondragover = event => {
+  event.preventDefault();
+  if (!htmlDraft || htmlDraft.mode !== "replace" || htmlDraft.saving || htmlDraft.failed) return;
+  event.dataTransfer.dropEffect = "copy";
+  event.currentTarget.classList.add("is-dragover");
+};
+$("#htmlReplacementDropzone").ondragleave = event => {
+  if (!event.relatedTarget || !event.currentTarget.contains(event.relatedTarget)) event.currentTarget.classList.remove("is-dragover");
+};
+$("#htmlReplacementDropzone").ondrop = event => {
+  event.preventDefault();
+  event.stopPropagation();
+  event.currentTarget.classList.remove("is-dragover");
+  selectHtmlReplacement(event.dataTransfer.files);
 };
 $("#htmlEditorDialog").addEventListener("keydown", event => {
   if ((event.ctrlKey || event.metaKey) && event.key === "Enter") saveHtmlEditor(event);

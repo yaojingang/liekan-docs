@@ -31,6 +31,36 @@ async function replace(app, page, cookie, html = replacement, revision = page.re
   return app.inject({ method: "POST", url: `${app.store.getAdminPath()}/api/pages/${page.id}/replace`, ...request, headers: { ...request.headers, ...(cookie ? { cookie } : {}) } });
 }
 
+test("replacement metadata returns the latest revision without reading or transferring the HTML body", async t => {
+  const { app, page, cookie } = await fixture(t);
+  await app.store.savePageContent(page.id, { html: "<h1>最新内容</h1>", revision: page.revision });
+  let reads = 0;
+  const readHtml = app.store.readPageHtml.bind(app.store);
+  app.store.readPageHtml = async (...args) => { reads++; return readHtml(...args); };
+  const response = await app.inject({ url: "/admin/api/pages/" + page.id + "/metadata", headers: { cookie } });
+  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(response.json().page.revision, 2);
+  assert.equal(response.json().page.url, page.url);
+  assert.equal(response.json().page.canEdit, true);
+  assert.equal(Object.hasOwn(response.json(), "html"), false);
+  assert.equal(reads, 0);
+  assert.ok(Buffer.byteLength(response.body) < 5000);
+  assert.equal(response.headers["cache-control"], "no-store");
+  const source = await app.inject({ url: "/admin/api/pages/" + page.id, headers: { cookie } });
+  assert.equal(source.statusCode, 200);
+  assert.match(source.json().html, /最新内容/);
+  assert.equal(reads, 1, "the source editor must still read the actual HTML");
+});
+
+test("replacement metadata requires login and excludes missing or trashed documents", async t => {
+  const { app, page, cookie } = await fixture(t);
+  const url = "/admin/api/pages/" + page.id + "/metadata";
+  assert.equal((await app.inject({ url })).statusCode, 401);
+  assert.equal((await app.inject({ url: "/admin/api/pages/missing/metadata", headers: { cookie } })).statusCode, 404);
+  await app.store.deletePage(page.id);
+  assert.equal((await app.inject({ url, headers: { cookie } })).statusCode, 404);
+});
+
 test("HTML replacement updates the same link and uploaded file while preserving identity, access and a restorable snapshot", async t => {
   const { app, page, cookie } = await fixture(t);
   await app.store.access.update(page.id, { homepageListed: false, passwordAction: "set", password: "reader-secret" });
