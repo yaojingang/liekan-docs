@@ -6,7 +6,7 @@
     <title>猎看文档系统</title>
     <link rel="stylesheet" href="/assets/styles/tokens.css?v=20261025-brand1" />
     <link rel="stylesheet" href="/assets/styles/components.css?v=20261009" />
-    <link rel="stylesheet" href="/assets/styles/admin.css?v=20261103-html1" />
+    <link rel="stylesheet" href="/assets/styles/admin.css?v=20261104-replace" />
   </head>
   <body class="lkdoc admin-page" data-auth="loading">
     <div class="boot-screen" id="bootScreen" role="status">正在加载工作台…</div>
@@ -834,7 +834,16 @@
         <div class="dialog-body">
           <p class="hint" id="htmlEditorStatus" role="status" aria-live="polite"></p>
           <label class="field" id="htmlSourceField"><span>HTML 源码</span><textarea id="htmlSource" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="htmlEditorNote"></textarea></label>
-          <div id="htmlReplacementField" hidden><label class="field"><span>选择新 HTML 文件</span><input id="htmlReplacementFile" type="file" accept=".html,.htm,text/html" /></label><p class="hint">支持 UTF-8 编码的 HTML / HTM，最大 20 MiB。原目录附件继续保留，新文件中的相对路径应与原目录一致。</p><p class="hint" id="htmlReplacementName"></p></div>
+          <div id="htmlReplacementField" hidden>
+            <input id="htmlReplacementFile" type="file" accept=".html,.htm,text/html" aria-label="选择新 HTML 文件" hidden />
+            <div class="html-replacement-dropzone" id="htmlReplacementDropzone">
+              <span class="html-replacement-icon" aria-hidden="true" data-icon="upload"></span>
+              <div class="html-replacement-copy"><strong id="htmlReplacementName">选择或拖入 HTML 文件</strong><span id="htmlReplacementDetails">HTML / HTM · UTF-8 · 最大 20 MiB</span></div>
+              <button class="btn" id="chooseHtmlReplacement" type="button">选择文件</button>
+              <button class="btn icon-btn ghost" id="clearHtmlReplacement" type="button" aria-label="移除已选文件" hidden><span data-icon="close"></span></button>
+            </div>
+            <p class="hint">原目录中的图片和样式继续保留，请保持新文件中的相对路径一致。</p>
+          </div>
           <p class="field-error" id="htmlEditorError" role="alert" hidden></p>
         </div>
         <div class="dialog-footer"><p class="hint" id="htmlEditorNote">保存后立即更新，原链接和权限保留，旧内容可在版本记录中恢复。</p><a class="btn" id="visualHtmlEditor" target="_blank" rel="noopener noreferrer">页面内编辑</a><button class="btn" id="cancelHtmlEditor" type="button">取消</button><button class="btn primary" id="saveHtmlEditor" type="submit">保存 HTML</button></div>
@@ -887,6 +896,6 @@
       </div>
     </dialog>
     <div class="toast" id="toast" role="status" hidden></div>
-    <script type="module" src="/assets/app.js?v=20261103-html2"></script>
+    <script type="module" src="/assets/app.js?v=20261104-replace"></script>
   </body>
 </html>

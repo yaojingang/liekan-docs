@@ -409,6 +409,13 @@ function registerApiRoutes(app, prefix = "") {
     return { ...app.store.analytics.rankingDetails(request.query || {}), documentStats: app.store.managementSummary().stats };
   });
 
+  app.get(`${prefix}/api/pages/:id/metadata`, async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    const page = app.store.getPage(request.params.id);
+    if (!page || page.deletedAt) return sendNotFound(reply, "Page not found");
+    return { page: publicPage(page) };
+  });
+
   app.get(`${prefix}/api/pages/:id`, async (request, reply) => {
     const page = app.store.getPage(request.params.id);
     if (!page) return sendNotFound(reply, "Page not found");

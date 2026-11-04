@@ -634,7 +634,7 @@ for (const destination of ["?view=documents", "?preview=B"]) {
     const b = { ...a, id: "B", title: "B", url: "/bbbbbb" };
     let fail = true;
     const { document, app, navigate } = await appHarness(async (url) => {
-      if (url.endsWith("/api/pages/B")) return response({ page: b });
+      if (url.endsWith("/api/pages/B/metadata")) return response({ page: b });
       return fail
         ? response({ error: "List offline" }, 500)
         : response(listResult);
@@ -859,7 +859,7 @@ test("an earlier initialization cannot reopen an upload dialog after the current
     canEdit: true,
   };
   const { document, app } = await appHarness(async (url) => {
-    if (url.endsWith("/api/pages/A"))
+    if (url.endsWith("/api/pages/A/metadata"))
       return new Promise((resolve) => {
         finish = resolve;
       });
@@ -2030,6 +2030,41 @@ test("logo chooser resets before upload so the same file remains retryable after
 });
 
 const htmlManagementPage = { id: "html-document", title: "测试报告", fileName: "report.html", canEdit: true, fileType: "html", revision: 3, url: "/abc123", editUrl: "/abc123?edit=1" };
+test("opening a document outside the cached list reads metadata before loading the reader frame", async () => {
+  const calls = [];
+  const { app, document } = await appHarness(async url => {
+    calls.push(url);
+    return response({ page: htmlManagementPage });
+  });
+  app.setSession(true);
+  app.setPages([]);
+  await app.openPreview(htmlManagementPage.id);
+  assert.deepEqual(calls, ["/admin/api/pages/html-document/metadata"]);
+  assert.equal(document.querySelector("#previewFrame").getAttribute("src"), htmlManagementPage.url);
+});
+
+test("replacement reads only metadata and accepts a file while the latest revision is loading", async () => {
+  const calls = [];
+  let finish;
+  const { app, document } = await appHarness(async url => {
+    calls.push(url);
+    return new Promise(resolve => { finish = () => resolve(response({ page: { ...htmlManagementPage, revision: 7 } })); });
+  });
+  app.setSession(true);
+  const opening = app.openEditor(htmlManagementPage, "replace");
+  assert.deepEqual(calls, ["/admin/api/pages/html-document/metadata"]);
+  const input = document.querySelector("#htmlReplacementFile");
+  assert.equal(input.disabled, false, "file selection must not wait for the network");
+  input.onchange({ target: { files: [new File(["<h1>新报告</h1>"], "report.HTML")], value: "report.HTML" } });
+  assert.equal(document.querySelector("#saveHtmlEditor").disabled, true, "saving still waits for the current revision");
+  assert.match(document.querySelector("#htmlReplacementName").textContent, /report\.HTML/);
+  finish();
+  await opening;
+  assert.equal(document.querySelector("#htmlSource").value, "");
+  assert.equal(document.querySelector("#saveHtmlEditor").disabled, false);
+  assert.match(document.querySelector("#htmlEditorStatus").textContent, /当前版本 7/);
+});
+
 test("HTML source editor reads the latest revision and saves the draft once while preserving the preview", async () => {
   const calls = [];
   let finishSave;
@@ -2085,7 +2120,7 @@ test("HTML replacement validates the selected file and submits a multipart reque
   let uploaded;
   const { app, document } = await appHarness(async (url, options) => {
     if (url.endsWith("/replace")) { uploaded = options.body; return response({ page: { ...htmlManagementPage, revision: 4 } }); }
-    if (url.endsWith("/html-document")) return response({ page: htmlManagementPage, html: "<h1>原稿</h1>" });
+    if (url.endsWith("/metadata")) return response({ page: htmlManagementPage });
     return response(listResult);
   });
   app.setSession(true);
@@ -2100,6 +2135,42 @@ test("HTML replacement validates the selected file and submits a multipart reque
   assert.equal(uploaded.get("revision"), "3");
   assert.equal(uploaded.get("file").name, "new.htm");
   assert.equal(document.querySelector("#htmlEditorDialog").open, false);
+});
+
+test("replacement picker supports drop, removal and reselecting a file while guarding invalid or busy submissions", async () => {
+  let finish;
+  const { app, document } = await appHarness(async url => url.endsWith("/replace") ? new Promise(resolve => { finish = () => resolve(response({ page: { ...htmlManagementPage, revision: 4 } })); }) : response({ page: htmlManagementPage }));
+  app.setSession(true);
+  await app.openEditor(htmlManagementPage, "replace");
+  const zone = document.querySelector("#htmlReplacementDropzone");
+  const file = new File(["<h1>报告</h1>"], "report.html");
+  const drop = files => zone.ondrop({ preventDefault() {}, stopPropagation() {}, currentTarget: zone, dataTransfer: { files } });
+  for (let i = 0; i < 2; i++) {
+    drop([file]);
+    assert.equal(zone.classList.contains("is-disabled"), false);
+    assert.equal(zone.classList.contains("has-file"), true);
+    assert.equal(document.querySelector("#saveHtmlEditor").disabled, false);
+    assert.equal(document.querySelector("#htmlReplacementFile").value, "");
+    document.querySelector("#clearHtmlReplacement").onclick();
+    assert.equal(zone.classList.contains("has-file"), false);
+    assert.equal(document.querySelector("#saveHtmlEditor").disabled, true);
+  }
+  for (const [files, expected] of [[[file, file], /一个/], [[new File([], "empty.html")], /为空/], [[{ name: "large.html", size: 20 * 1024 * 1024 + 1 }], /20 MiB/]]) {
+    drop(files);
+    assert.match(document.querySelector("#htmlEditorError").textContent, expected);
+    assert.equal(document.querySelector("#saveHtmlEditor").disabled, true);
+  }
+  drop([file]);
+  assert.equal(document.querySelector("#htmlEditorError").hidden, true);
+  const saving = app.saveHtmlEditor();
+  assert.equal(document.querySelector("#chooseHtmlReplacement").disabled, true);
+  assert.equal(document.querySelector("#clearHtmlReplacement").disabled, true);
+  assert.match(document.querySelector("#htmlEditorStatus").textContent, /正在上传并替换/);
+  drop([new File(["<h1>另一份</h1>"], "ignored.html")]);
+  document.querySelector("#clearHtmlReplacement").onclick();
+  assert.equal(document.querySelector("#htmlReplacementName").textContent, "report.html");
+  finish();
+  await saving;
 });
 
 test("HTML editor clears drafts on session expiry and ignores a late successful save", async () => {
