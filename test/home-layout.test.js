@@ -2155,7 +2155,9 @@ test("replacement picker supports drop, removal and reselecting a file while gua
     assert.equal(zone.classList.contains("has-file"), false);
     assert.equal(document.querySelector("#saveHtmlEditor").disabled, true);
   }
-  for (const [files, expected] of [[[file, file], /一个/], [[new File([], "empty.html")], /为空/], [[{ name: "large.html", size: 20 * 1024 * 1024 + 1 }], /20 MiB/]]) {
+  drop([{ name: "limit.html", size: 50 * 1024 * 1024 }]);
+  assert.equal(document.querySelector("#saveHtmlEditor").disabled, false);
+  for (const [files, expected] of [[[file, file], /一个/], [[new File([], "empty.html")], /为空/], [[{ name: "large.html", size: 50 * 1024 * 1024 + 1 }], /50 MiB/]]) {
     drop(files);
     assert.match(document.querySelector("#htmlEditorError").textContent, expected);
     assert.equal(document.querySelector("#saveHtmlEditor").disabled, true);
