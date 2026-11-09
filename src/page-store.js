@@ -1767,8 +1767,8 @@ export class PageStore {
     }
     if (html != null && (typeof html !== "string" || !html.trim() || html.includes("\0") || !/<[a-z][^>]*>/i.test(html)))
       throw Object.assign(new Error("请输入有效的 HTML 内容"), { code: "HTML_INVALID", statusCode: 400 });
-    if (html != null && Buffer.byteLength(html) > 20 * 1024 * 1024)
-      throw Object.assign(new Error("HTML 内容最大为 20 MiB"), { code: "HTML_INVALID", statusCode: 413 });
+    if (html != null && Buffer.byteLength(html) > 50 * 1024 * 1024)
+      throw Object.assign(new Error("HTML 内容最大为 50 MiB"), { code: "HTML_INVALID", statusCode: 413 });
     const currentContent = await this.readPageHtml(page);
     let nextContent = removeEditBridge(
       html || composeDocument(title || page.title, body || ""),

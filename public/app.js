@@ -681,7 +681,7 @@ function htmlEditorState() {
   $("#htmlReplacementDropzone").classList.toggle("is-disabled", pickerLocked);
   $("#htmlReplacementName").textContent = file ? file.name : "选择或拖入 HTML 文件";
   $("#htmlReplacementName").title = file?.name || "";
-  $("#htmlReplacementDetails").textContent = file ? formatSize(file.size) + " · 已选择" : "HTML / HTM · UTF-8 · 最大 20 MiB";
+  $("#htmlReplacementDetails").textContent = file ? formatSize(file.size) + " · 已选择" : "HTML / HTM · UTF-8 · 最大 50 MiB";
   $("#chooseHtmlReplacement").textContent = file ? "重新选择" : "选择文件";
   $("#clearHtmlReplacement").hidden = !file;
   $("#htmlSource").readOnly = locked;
@@ -697,7 +697,7 @@ function selectHtmlReplacement(files) {
   const selected = [...files];
   if (!selected.length) return;
   const file = selected[0];
-  const error = selected.length !== 1 ? "每次请选择一个 HTML 文件。" : !/\.html?$/i.test(file.name) ? "请选择 HTML 或 HTM 文件。" : !file.size ? "文件内容为空，请重新选择。" : file.size > 20 * 1024 * 1024 ? "HTML 文件最大为 20 MiB。" : "";
+  const error = selected.length !== 1 ? "每次请选择一个 HTML 文件。" : !/\.html?$/i.test(file.name) ? "请选择 HTML 或 HTM 文件。" : !file.size ? "文件内容为空，请重新选择。" : file.size > 50 * 1024 * 1024 ? "HTML 文件最大为 50 MiB。" : "";
   htmlDraft.file = error ? null : file;
   $("#htmlReplacementFile").value = "";
   $("#htmlEditorError").textContent = error;
@@ -1722,8 +1722,8 @@ async function uploadFiles(files) {
     toast("每批最多 200 个文件，包含目录附件。", "error");
     return;
   }
-  if (uploadable.some((file) => file.size > 20 * 1024 * 1024)) {
-    toast("单文件最大 20 MiB，请调整后上传。", "error");
+  if (uploadable.some((file) => file.size > 50 * 1024 * 1024)) {
+    toast("单文件最大 50 MiB，请调整后上传。", "error");
     return;
   }
   resetUpload();

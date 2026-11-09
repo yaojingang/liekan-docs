@@ -232,7 +232,7 @@
               <button class="btn upload-sample" id="uploadSamplesButton" type="button">
                 <span data-icon="document"></span>添加示例
               </button>
-              <span class="upload-entry-note">也可拖放文件至此 · 单文件最大 20 MiB</span>
+              <span class="upload-entry-note">也可拖放文件至此 · 单文件最大 50 MiB</span>
             </div>
           </section>
           <ol class="upload-steps" aria-label="上传流程"><li><span>1</span><div><strong>选择文档</strong><p>上传文件、导入目录或直接拖放。</p></div></li><li><span>2</span><div><strong>核对信息与权限</strong><p>调整名称、首页可见性与访问密码。</p></div></li><li><span>3</span><div><strong>确认入库</strong><p>生成阅读链接，随时管理与更新。</p></div></li></ol>
@@ -838,7 +838,7 @@
             <input id="htmlReplacementFile" type="file" accept=".html,.htm,text/html" aria-label="选择新 HTML 文件" hidden />
             <div class="html-replacement-dropzone" id="htmlReplacementDropzone">
               <span class="html-replacement-icon" aria-hidden="true" data-icon="upload"></span>
-              <div class="html-replacement-copy"><strong id="htmlReplacementName">选择或拖入 HTML 文件</strong><span id="htmlReplacementDetails">HTML / HTM · UTF-8 · 最大 20 MiB</span></div>
+              <div class="html-replacement-copy"><strong id="htmlReplacementName">选择或拖入 HTML 文件</strong><span id="htmlReplacementDetails">HTML / HTM · UTF-8 · 最大 50 MiB</span></div>
               <button class="btn" id="chooseHtmlReplacement" type="button">选择文件</button>
               <button class="btn icon-btn ghost" id="clearHtmlReplacement" type="button" aria-label="移除已选文件" hidden><span data-icon="close"></span></button>
             </div>
@@ -896,6 +896,6 @@
       </div>
     </dialog>
     <div class="toast" id="toast" role="status" hidden></div>
-    <script type="module" src="/assets/app.js?v=20261104-replace"></script>
+    <script type="module" src="/assets/app.js?v=20261109-upload50"></script>
   </body>
 </html>

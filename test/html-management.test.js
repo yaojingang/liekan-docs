@@ -26,6 +26,39 @@ function multipart(html, revision = 1, fileName = "updated.html", extraFile = fa
   return { headers: { "content-type": `multipart/form-data; boundary=${boundary}` }, payload: Buffer.concat(parts) };
 }
 
+test("document uploads accept exactly 50 MiB and reject one extra byte through both upload endpoints", async t => {
+  const { app, cookie } = await fixture(t);
+  const limit = 50 * 1024 * 1024;
+  for (const endpoint of ["/admin/api/pages/upload", "/admin/api/pages/upload/prepare"]) {
+    for (const size of [limit, limit + 1]) {
+      const file = Buffer.alloc(size, 32);
+      file.write("%PDF-1.4\n");
+      const request = multipart(file, 1, "limit.pdf");
+      const response = await app.inject({ method: "POST", url: endpoint, ...request, headers: { ...request.headers, cookie } });
+      assert.equal(response.statusCode, size === limit ? 201 : 413, `${endpoint}: ${response.body}`);
+      if (response.statusCode === 201 && endpoint.endsWith("/prepare")) {
+        const staged = response.json();
+        const manifest = await app.store.readStagedUploadManifest(staged.uploadId);
+        assert.equal(manifest.files[0].size, limit);
+        await app.store.cancelStagedUpload(staged.uploadId);
+      } else if (response.statusCode === 201) {
+        assert.equal((await fs.stat(response.json().pages[0].sourcePath)).size, limit);
+      }
+    }
+  }
+});
+
+test("HTML replacement accepts a file at the 50 MiB boundary", async t => {
+  const { app, page, cookie } = await fixture(t);
+  const limit = 50 * 1024 * 1024;
+  const html = replacement.replace("</body>", `<!--${"a".repeat(limit - Buffer.byteLength(replacement) - 7)}--></body>`);
+  assert.equal(Buffer.byteLength(html), limit);
+  const response = await replace(app, page, cookie, html);
+  assert.equal(response.statusCode, 200, response.body);
+  assert.ok((await fs.stat(page.sourcePath)).size >= limit);
+  assert.equal(response.json().page.revision, 2);
+});
+
 async function replace(app, page, cookie, html = replacement, revision = page.revision, fileName, extraFile) {
   const request = multipart(html, revision, fileName, extraFile);
   return app.inject({ method: "POST", url: `${app.store.getAdminPath()}/api/pages/${page.id}/replace`, ...request, headers: { ...request.headers, ...(cookie ? { cookie } : {}) } });
@@ -108,7 +141,7 @@ test("replacement validates authentication, revision, file count, type, encoding
     ["plain text", 1, "updated.html", false, 400, cookie],
     [Buffer.from([0xff, 0xfe, 0x00]), 1, "updated.html", false, 400, cookie],
     [replacement, 1, "updated.html", true, 400, cookie],
-    [Buffer.alloc(20 * 1024 * 1024 + 1, 65), 1, "updated.html", false, 413, cookie],
+    [Buffer.alloc(50 * 1024 * 1024 + 1, 65), 1, "updated.html", false, 413, cookie],
   ];
   for (const [html, revision, fileName, extra, expected, auth] of cases) {
     const response = await replace(app, page, auth, html, revision, fileName, extra);
@@ -121,10 +154,10 @@ test("replacement validates authentication, revision, file count, type, encoding
 
 test("source editor accepts HTML larger than Fastify's default JSON limit and rejects empty or oversized content", async t => {
   const { app, page, cookie } = await fixture(t);
-  const html = replacement.replace("</body>", `<p>${"a".repeat(1100000)}</p></body>`);
+  const html = replacement.replace("</body>", `<p>${"a".repeat(21 * 1024 * 1024)}</p></body>`);
   const response = await app.inject({ method: "PATCH", url: `/admin/api/pages/${page.id}/content`, headers: { cookie }, payload: { html, revision: 1 } });
   assert.equal(response.statusCode, 200, response.body);
-  for (const [invalid, code] of [["", 400], [23, 400], ["<p>\0</p>", 400], ["<p>" + "a".repeat(20 * 1024 * 1024) + "</p>", 413]]) {
+  for (const [invalid, code] of [["", 400], [23, 400], ["<p>\0</p>", 400], ["<p>" + "a".repeat(50 * 1024 * 1024) + "</p>", 413]]) {
     const result = await app.inject({ method: "PATCH", url: `/admin/api/pages/${page.id}/content`, headers: { cookie }, payload: { html: invalid, revision: 2 } });
     assert.equal(result.statusCode, code, result.body);
   }
