@@ -641,6 +641,21 @@
 
 /* Document access settings share the upload and management forms. */
 .access-settings-dialog { max-width:720px; }
+.project-settings-heading, .project-item, .project-actions { display:flex; align-items:center; gap:12px; }
+.filter-actions { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.project-settings-heading, .project-item { justify-content:space-between; }
+.project-settings-heading h2 { margin:0; }
+.project-list { margin-top:20px; }
+.project-item { padding:16px 0; border-bottom:1px solid var(--line); }
+.project-item:last-child { border-bottom:0; }
+.project-item > div:first-child { min-width:0; overflow-wrap:anywhere; }
+.project-item strong { display:block; font-size:13px; font-weight:500; }
+.project-actions { flex-shrink:0; }
+.project-settings-heading .btn, .project-actions .btn { min-height:44px; }
+.upload-project { grid-column:2/-1; }
+.upload-project select { min-height:44px; width:100%; }
+.title-meta.project-meta { overflow-wrap:anywhere; white-space:normal; }
+@media(max-width:600px) { .project-item { align-items:flex-start; flex-wrap:wrap; }.project-actions { margin-left:auto; } }
 .access-settings-dialog .dialog-body { display:grid; gap:16px; }
 .access-settings-dialog .field { min-width:0; }
 .access-settings-dialog .hint { margin:0; overflow-wrap:anywhere; }

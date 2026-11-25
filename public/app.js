@@ -44,6 +44,8 @@ let metadataReady = false,
   settingsEditSerial = 0,
   addingSamples = false;
 let navigationDraft = [], navigationSerial = 0;
+let projects = [], defaultProject = { name: "默认项目", documentCount: 0 }, projectRevision = 0;
+let projectDraft = null, pageProjectDraft = null, projectDeleting = false;
 let logoUploading = false, logoUploadSerial = 0;
 let htmlDraft = null;
 let previewPage = null,
@@ -64,7 +66,7 @@ let analyticsData = null, analyticsChartWidth = 0;
 function readFilters() {
   const p = new URLSearchParams(location.search);
   return {
-    view: ["analytics", "analytics-details"].includes(p.get("view")) ? p.get("view") : p.get("view") === "documents" || [...p.keys()].some(key => ["q", "type", "scope", "status", "directory", "directoryEmpty", "visibility", "accessMode", "password", "sort", "page", "preview"].includes(key)) ? "documents" : "upload",
+    view: ["analytics", "analytics-details"].includes(p.get("view")) ? p.get("view") : p.get("view") === "documents" || [...p.keys()].some(key => ["q", "type", "scope", "status", "directory", "directoryEmpty", "projectId", "visibility", "accessMode", "password", "sort", "page", "preview"].includes(key)) ? "documents" : "upload",
     analyticsDays: [7, 30, 90].includes(Number(p.get("days"))) ? Number(p.get("days")) : 30,
     ranking: p.get("ranking") === "today" ? "today" : "total",
     q: (p.get("q") || "").trim(),
@@ -76,6 +78,7 @@ function readFilters() {
       : "all",
     directory: p.get("directory") || "",
     directoryEmpty: p.get("directoryEmpty") === "1",
+    projectId: p.get("projectId") || "",
     visibility: ["public", "private"].includes(p.get("visibility"))
       ? p.get("visibility")
       : "all",
@@ -106,6 +109,7 @@ function queryString() {
     "type",
     "status",
     "directory",
+    "projectId",
     "visibility",
     "accessMode",
     "password",
@@ -178,6 +182,8 @@ function showError(error) {
   toast(error.message || String(error), "error");
 }
 function showLogin(message = "") {
+  projectDraft = null;
+  pageProjectDraft = null;
   resetHtmlEditor();
   $("#accessPassword").value = ""; accessPage = null;
   sessionEpoch++;
@@ -259,12 +265,17 @@ function shell() {
 }
 async function loadMetadata() {
   const epoch = sessionEpoch;
+  const revision = projectRevision;
   const [s, w] = await Promise.all([
     api("/api/settings"),
     api("/api/watch-dirs"),
   ]);
   if (epoch !== sessionEpoch || !session) return;
   settings = s.settings;
+  if (revision === projectRevision) {
+    projects = s.projects || [];
+    defaultProject = s.defaultProject || defaultProject;
+  }
   runtime = s.runtime || {};
   watchDirs = w.watchDirs || [];
   metadataReady = true;
@@ -273,6 +284,7 @@ async function loadMetadata() {
   if (isSettingsPage) {
     fillSettings();
     renderWatchDirs();
+    renderProjects();
   }
 }
 function syncFilters() {
@@ -283,6 +295,11 @@ function syncFilters() {
   $("#visibilitySelect").value = filters.accessMode !== "all" ? filters.accessMode : filters.visibility;
   $("#passwordFilter").value = filters.password || "all";
   $("#sortSelect").value = filters.sort;
+  const projectFilter = $("#projectFilter");
+  projectFilter.innerHTML = '<option value="">所有项目</option><option value="unassigned">默认项目</option>' + projects.map(project => `<option value="${esc(project.id)}">${esc(projectLabel(project))}</option>`).join("");
+  if (filters.projectId && ![...projectFilter.options].some(option => option.value === filters.projectId))
+    projectFilter.add(new Option("项目已删除", filters.projectId));
+  projectFilter.value = filters.projectId;
   const value = filters.directoryEmpty
     ? "root"
     : filters.directory
@@ -545,7 +562,7 @@ function renderRows() {
             ? page.createdAt
             : page.updatedAt,
       );
-      return `<tr data-row-id="${esc(page.id)}"><td class="title-cell"><div class="doc-name">${fileIcon(page.fileType)}<div class="title-copy">${deleted ? `<span class="title-main">${esc(name)}</span>` : `<button class="title-main" type="button" data-action="preview" data-id="${esc(page.id)}" title="${esc(name)}">${esc(name)}</button>`}<span class="title-meta" title="${esc(page.fileName)}">${esc(page.fileName)} · ${formatSize(page.size)}</span></div></div></td><td class="mono">${esc(time || "-")}</td><td><span class="directory-cell" title="${esc(page.directoryName || "无目录")}">${esc(page.directoryName || "无目录")}</span></td><td class="mono">${Number(page.accessCount) || 0}</td><td>${deleted ? `<span class="pill ${page.visibility === "private" ? "warning" : "success"}">${accessLabel(page)}${page.hasAccessPassword ? " · 密码" : ""}</span>` : `<button class="pill visibility-toggle ${page.visibility === "private" ? "warning" : "success"}" type="button" data-action="visibility" data-id="${esc(page.id)}" title="设置文档访问权限">${accessLabel(page)}${page.hasAccessPassword ? " · 密码" : ""}</button>`}</td><td><span class="pill ${tone}">${state}</span></td><td><div class="row-actions">${deleted ? `<button class="btn" data-action="restore" data-id="${esc(page.id)}">恢复文档</button>` : `<button class="btn" data-action="preview" data-id="${esc(page.id)}">阅读</button>${editable ? `<a class="btn row-edit" href="${esc(page.editUrl)}" target="_blank" rel="noopener noreferrer">编辑</a>` : ""}<button class="btn icon-btn" data-action="more" data-id="${esc(page.id)}" aria-label="${esc(name)}的更多操作" aria-haspopup="menu">${icon("more")}</button>`}</div></td></tr>`;
+      return `<tr data-row-id="${esc(page.id)}"><td class="title-cell"><div class="doc-name">${fileIcon(page.fileType)}<div class="title-copy">${deleted ? `<span class="title-main">${esc(name)}</span>` : `<button class="title-main" type="button" data-action="preview" data-id="${esc(page.id)}" title="${esc(name)}">${esc(name)}</button>`}<span class="title-meta" title="${esc(page.fileName)}">${esc(page.fileName)} · ${formatSize(page.size)}</span><span class="title-meta project-meta">${esc(projectLabel({ id: page.projectId, name: page.projectName || "默认项目" }))}</span></div></div></td><td class="mono">${esc(time || "-")}</td><td><span class="directory-cell" title="${esc(page.directoryName || "无目录")}">${esc(page.directoryName || "无目录")}</span></td><td class="mono">${Number(page.accessCount) || 0}</td><td>${deleted ? `<span class="pill ${page.visibility === "private" ? "warning" : "success"}">${accessLabel(page)}${page.hasAccessPassword ? " · 密码" : ""}</span>` : `<button class="pill visibility-toggle ${page.visibility === "private" ? "warning" : "success"}" type="button" data-action="visibility" data-id="${esc(page.id)}" title="设置文档访问权限">${accessLabel(page)}${page.hasAccessPassword ? " · 密码" : ""}</button>`}</td><td><span class="pill ${tone}">${state}</span></td><td><div class="row-actions">${deleted ? `<button class="btn" data-action="restore" data-id="${esc(page.id)}">恢复文档</button>` : `<button class="btn" data-action="preview" data-id="${esc(page.id)}">阅读</button>${editable ? `<a class="btn row-edit" href="${esc(page.editUrl)}" target="_blank" rel="noopener noreferrer">编辑</a>` : ""}<button class="btn icon-btn" data-action="more" data-id="${esc(page.id)}" aria-label="${esc(name)}的更多操作" aria-haspopup="menu">${icon("more")}</button>`}</div></td></tr>`;
     })
     .join("");
   for (const id of busyPages)
@@ -571,6 +588,7 @@ function renderList() {
       filters.q ||
       filters.directory ||
       filters.directoryEmpty ||
+      filters.projectId ||
       filters.visibility !== "all" ||
       (filters.accessMode && filters.accessMode !== "all") ||
       (filters.password && filters.password !== "all") ||
@@ -587,6 +605,7 @@ async function loadList() {
   if (!isSettingsPage && filters.view === "analytics") return loadAnalytics();
   if (!isSettingsPage && filters.view === "analytics-details") return loadRankingDetails();
   const serial = ++requestSerial;
+  const revision = projectRevision;
   $("#listLoading").hidden = false;
   $("#managerTable").setAttribute("aria-busy", "true");
   const p = queryString();
@@ -612,11 +631,16 @@ async function loadList() {
     pages = data.pages || [];
     stats = data.stats || {};
     facets = data.facets || {};
+    if (revision === projectRevision) {
+      projects = facets.projects || projects;
+      defaultProject = facets.defaultProject || defaultProject;
+    }
     pagination = data.pagination;
     filters.page = pagination.page;
     writeUrl();
     $("#globalError").hidden = true;
     renderList();
+    if (isSettingsPage) renderProjects();
   } catch (error) {
     if (serial === requestSerial) {
       showError(error);
@@ -661,6 +685,7 @@ function clearFilters() {
     status: "all",
     directory: "",
     directoryEmpty: false,
+    projectId: "",
     visibility: "all",
     accessMode: "all",
     password: "all",
@@ -845,6 +870,7 @@ async function downloadPage(page) {
 function menuItems(page) {
   return [
     { label: "访问设置", icon: "lock", run: () => openAccess(page) },
+    { label: "设置项目", icon: "folder", run: () => openPageProject(page) },
     { label: "复制链接", icon: "copy", run: () => copyPage(page) },
     { label: "下载源文件", icon: "download", run: () => downloadPage(page) },
     {
@@ -1067,6 +1093,7 @@ function renderPreviewMeta() {
     ["文件类型", p.fileType === "word" ? "Word" : p.fileType.toUpperCase()],
     ["原文件名", p.fileName],
     ["目录", p.directoryName || "无目录"],
+    ["项目", projectLabel({ id: p.projectId, name: p.projectName || "默认项目" })],
     ["大小", formatSize(p.size)],
     ["入库时间", formatDate(p.createdAt, true)],
     ["更新时间", formatDate(p.updatedAt, true)],
@@ -1377,6 +1404,152 @@ function fillSettings() {
     : "未启用";
   updateSaveState();
 }
+function projectLabel(project) {
+  return project.id && project.name === "默认项目" ? "默认项目（自定义）" : project.name;
+}
+function projectOptions() {
+  return '<option value="">默认项目</option>' + projects.map(project => `<option value="${esc(project.id)}">${esc(projectLabel(project))}</option>`).join("") + '<option value="__new__">＋ 新建项目…</option>';
+}
+function fillProjectSelect(select, value = select.value) {
+  select.innerHTML = projectOptions();
+  if (value && !projects.some(project => project.id === value))
+    select.add(new Option("项目已删除，请重新选择", value));
+  select.value = value || "";
+  select.dataset.previousProjectId = select.value;
+}
+function renderProjects() {
+  $("#projectList").innerHTML = `<div class="project-item" data-default-project><div><strong>默认项目</strong><span class="hint">${Number(defaultProject.documentCount) || 0} 个文档</span></div><span class="hint">系统内置</span></div>` + projects.map(project => `<div class="project-item"><div><strong>${esc(projectLabel(project))}</strong><span class="hint">${Number(project.documentCount) || 0} 个文档</span></div><div class="project-actions"><button type="button" class="btn small" data-project-action="rename" data-id="${esc(project.id)}">重命名</button><button type="button" class="btn small danger" data-project-action="delete" data-id="${esc(project.id)}">删除</button></div></div>`).join("");
+}
+function refreshProjectControls() {
+  renderProjects();
+  syncFilters();
+  document.querySelectorAll('[data-upload-field="projectId"]').forEach(select => fillProjectSelect(select));
+  if (pageProjectDraft) fillProjectSelect($("#pageProjectSelect"));
+}
+function handleNewProjectOption(select) {
+  if (select.value !== "__new__") { select.dataset.previousProjectId = select.value; return; }
+  select.value = select.dataset.previousProjectId || "";
+  openProjectName(null, project => {
+    if (!select.isConnected) return;
+    select.value = project.id;
+    select.dataset.previousProjectId = project.id;
+  });
+}
+function openProjectName(project = null, onSaved = null) {
+  if (!session || projectDraft || projectDeleting) return;
+  projectDraft = { project, onSaved, saving: false, epoch: sessionEpoch };
+  $("#projectNameTitle").textContent = project ? "重命名项目" : "新建项目";
+  $("#projectNameInput").value = project?.name || "";
+  $("#projectNameError").hidden = true;
+  for (const id of ["saveProjectName", "cancelProjectName", "closeProjectName", "projectNameInput"]) $("#" + id).disabled = false;
+  $("#projectNameDialog").showModal();
+}
+function closeProjectName() {
+  if (projectDraft?.saving) return;
+  $("#projectNameDialog").close();
+  projectDraft = null;
+}
+async function saveProjectName(event) {
+  event.preventDefault();
+  const draft = projectDraft;
+  if (!draft || draft.saving) return;
+  const name = $("#projectNameInput").value.trim();
+  if (!name) { $("#projectNameInput").focus(); return; }
+  draft.saving = true;
+  for (const id of ["saveProjectName", "cancelProjectName", "closeProjectName", "projectNameInput"]) $("#" + id).disabled = true;
+  $("#projectNameError").hidden = true;
+  try {
+    const result = await api(`/api/projects${draft.project ? "/" + encodeURIComponent(draft.project.id) : ""}`, json(draft.project ? "PATCH" : "POST", { name }));
+    if (projectDraft !== draft || draft.epoch !== sessionEpoch || !session) return;
+    projectRevision++;
+    projects = result.projects;
+    defaultProject = result.defaultProject || defaultProject;
+    refreshProjectControls();
+    $("#projectNameDialog").close();
+    projectDraft = null;
+    draft.onSaved?.(result.project);
+    toast(draft.project ? "项目已重命名" : "项目已创建");
+  } catch (error) {
+    if (projectDraft !== draft || draft.epoch !== sessionEpoch || !session) return;
+    $("#projectNameError").textContent = error.message;
+    $("#projectNameError").hidden = false;
+  } finally {
+    if (projectDraft === draft) {
+      draft.saving = false;
+      for (const id of ["saveProjectName", "cancelProjectName", "closeProjectName", "projectNameInput"]) $("#" + id).disabled = false;
+    }
+  }
+}
+async function deleteProject(button) {
+  if (projectDeleting) return;
+  const project = projects.find(project => project.id === button.dataset.id);
+  if (!project) return;
+  projectDeleting = true;
+  $("#addProject").disabled = true;
+  const epoch = sessionEpoch;
+  try {
+    if (!await confirmAction({ title: "删除项目", message: `删除“${project.name}”后，文档保留并归入默认项目。`, confirm: "删除项目", danger: true })) return;
+    if (epoch !== sessionEpoch || !session) return;
+    button.disabled = true;
+    const result = await api(`/api/projects/${encodeURIComponent(project.id)}`, { method: "DELETE" });
+    if (epoch !== sessionEpoch || !session) return;
+    projectRevision++;
+    projects = result.projects;
+    defaultProject = result.defaultProject || defaultProject;
+    refreshProjectControls();
+    toast("项目已删除，文档已保留");
+    $("#addProject").disabled = false;
+    $("#addProject").focus();
+  } catch (error) {
+    if (epoch !== sessionEpoch || !session) return;
+    $("#projectListError").textContent = error.message;
+    $("#projectListError").hidden = false;
+  } finally {
+    projectDeleting = false;
+    $("#addProject").disabled = false;
+    if (button.isConnected) button.disabled = false;
+  }
+}
+function openPageProject(page) {
+  if (!session || pageProjectDraft || page.deletedAt || busyPages.has(page.id)) return;
+  pageProjectDraft = { page, saving: false, epoch: sessionEpoch };
+  $("#pageProjectName").textContent = page.title || page.fileName;
+  fillProjectSelect($("#pageProjectSelect"), page.projectId);
+  $("#pageProjectError").hidden = true;
+  for (const id of ["savePageProject", "cancelPageProject", "closePageProject", "pageProjectSelect"]) $("#" + id).disabled = false;
+  $("#pageProjectDialog").showModal();
+}
+function closePageProject() {
+  if (pageProjectDraft?.saving) return;
+  $("#pageProjectDialog").close();
+  pageProjectDraft = null;
+}
+async function savePageProject(event) {
+  event.preventDefault();
+  const draft = pageProjectDraft;
+  if (!draft || draft.saving) return;
+  draft.saving = true;
+  for (const id of ["savePageProject", "cancelPageProject", "closePageProject", "pageProjectSelect"]) $("#" + id).disabled = true;
+  $("#pageProjectError").hidden = true;
+  try {
+    const result = await api(`/api/pages/${encodeURIComponent(draft.page.id)}/project`, json("PATCH", { projectId: $("#pageProjectSelect").value }));
+    if (pageProjectDraft !== draft || draft.epoch !== sessionEpoch || !session) return;
+    if (previewPage?.id === draft.page.id) { previewPage = result.page; renderPreviewMeta(); }
+    $("#pageProjectDialog").close();
+    pageProjectDraft = null;
+    toast("项目已更新");
+    loadList().catch(() => {});
+  } catch (error) {
+    if (pageProjectDraft !== draft || draft.epoch !== sessionEpoch || !session) return;
+    $("#pageProjectError").textContent = error.message;
+    $("#pageProjectError").hidden = false;
+  } finally {
+    if (pageProjectDraft === draft) {
+      draft.saving = false;
+      for (const id of ["savePageProject", "cancelPageProject", "closePageProject", "pageProjectSelect"]) $("#" + id).disabled = false;
+    }
+  }
+}
 function renderWatchDirs() {
   const host = $("#watchList");
   host.innerHTML = watchDirs.length
@@ -1619,8 +1792,13 @@ function renderUploadReview(upload) {
   $("#uploadReview").hidden = false;
   $("#uploadReviewCount").textContent = `${upload.documents.length} 个文档`;
   $("#uploadReviewSummary").textContent = upload.assetCount ? `包含 ${upload.assetCount} 个目录附件，将随文档一同保存。` : "已提取文档信息，可直接修改下方内容。";
-  $("#uploadReviewRows").innerHTML = upload.documents.map(item => `<div class="upload-review-row" data-upload-doc-id="${esc(item.id)}"><div class="upload-review-type"><span class="pill">${esc(item.fileType.toUpperCase())}</span><span title="${esc(item.relativePath)}">${esc(item.directoryName || "无目录")}</span></div><label class="field"><span>文档标题</span><input data-upload-field="title" aria-label="文档标题" value="${esc(item.title)}"></label><label class="field"><span>文件名称</span><input data-upload-field="fileName" aria-label="文件名称" value="${esc(item.fileName)}" required></label><div class="upload-policy"><label class="field"><span>访问方式</span><select data-upload-field="visibility" aria-label="文档访问方式">${accessOptions}</select></label><div class="upload-password"><label class="checkbox-field"><input type="checkbox" data-upload-field="protected"><span>启用访问密码</span></label><div class="upload-password-input password-control" hidden><input type="password" data-upload-field="password" autocomplete="new-password" aria-label="访问密码" placeholder="设置访问密码，至少 6 个字符"><button type="button" class="btn" data-show-upload-password>显示</button></div></div><p class="hint upload-policy-hint"></p>${upload.documents.length > 1 ? `<button type="button" class="btn" data-apply-upload-policy>应用到本批 ${upload.documents.length} 个文档</button>` : ""}</div></div>`).join("");
-  document.querySelectorAll('[data-upload-doc-id]').forEach((row,index) => { row.querySelector('[data-upload-field="visibility"]').value = upload.documents[index].visibility || "public"; uploadPolicyState(row); });
+  $("#uploadReviewRows").innerHTML = upload.documents.map(item => `<div class="upload-review-row" data-upload-doc-id="${esc(item.id)}"><div class="upload-review-type"><span class="pill">${esc(item.fileType.toUpperCase())}</span><span title="${esc(item.relativePath)}">${esc(item.directoryName || "无目录")}</span></div><label class="field"><span>文档标题</span><input data-upload-field="title" aria-label="文档标题" value="${esc(item.title)}"></label><label class="field"><span>文件名称</span><input data-upload-field="fileName" aria-label="文件名称" value="${esc(item.fileName)}" required></label><label class="field upload-project"><span>项目</span><select data-upload-field="projectId" aria-label="文档项目">${projectOptions()}</select></label><div class="upload-policy"><label class="field"><span>访问方式</span><select data-upload-field="visibility" aria-label="文档访问方式">${accessOptions}</select></label><div class="upload-password"><label class="checkbox-field"><input type="checkbox" data-upload-field="protected"><span>启用访问密码</span></label><div class="upload-password-input password-control" hidden><input type="password" data-upload-field="password" autocomplete="new-password" aria-label="访问密码" placeholder="设置访问密码，至少 6 个字符"><button type="button" class="btn" data-show-upload-password>显示</button></div></div><p class="hint upload-policy-hint"></p>${upload.documents.length > 1 ? `<button type="button" class="btn" data-apply-upload-policy>应用到本批 ${upload.documents.length} 个文档</button>` : ""}</div></div>`).join("");
+  document.querySelectorAll('[data-upload-doc-id]').forEach((row, index) => {
+    const item = upload.documents[index];
+    row.querySelector('[data-upload-field="visibility"]').value = item.visibility || "public";
+    fillProjectSelect(row.querySelector('[data-upload-field="projectId"]'), item.projectId || "");
+    uploadPolicyState(row);
+  });
   uploadLocks();
 }
 function renderUploadSuccess(result) {
@@ -1643,7 +1821,7 @@ function uploadReviewDocuments() {
     const mode = row.querySelector('[data-upload-field="visibility"]').value;
     const enabled = mode !== "private" && row.querySelector('[data-upload-field="protected"]').checked;
     const password = row.querySelector('[data-upload-field="password"]').value;
-    return { id:row.dataset.uploadDocId, title:row.querySelector('[data-upload-field="title"]').value.trim(), fileName:row.querySelector('[data-upload-field="fileName"]').value.trim(), visibility: mode === "private" ? "private" : "public", homepageListed: mode !== "unlisted", passwordAction: enabled ? "set" : "keep", ...(enabled ? {password} : {}) };
+    return { id:row.dataset.uploadDocId, title:row.querySelector('[data-upload-field="title"]').value.trim(), fileName:row.querySelector('[data-upload-field="fileName"]').value.trim(), projectId:row.querySelector('[data-upload-field="projectId"]').value, visibility: mode === "private" ? "private" : "public", homepageListed: mode !== "unlisted", passwordAction: enabled ? "set" : "keep", ...(enabled ? {password} : {}) };
   });
 }
 function uploadWithProgress(form) {
@@ -1848,18 +2026,25 @@ async function confirmUpload() {
     notice($("#globalError"), "文档已成功入库，列表刷新失败。", "刷新列表");
   }
 }
-$("#uploadReviewRows").onchange = event => { const row = event.target.closest('[data-upload-doc-id]'); if (row) uploadPolicyState(row); };
+$("#uploadReviewRows").onchange = event => {
+  const row = event.target.closest('[data-upload-doc-id]');
+  if (!row) return;
+  if (event.target.dataset.uploadField === "projectId") handleNewProjectOption(event.target);
+  uploadPolicyState(row);
+};
 $("#uploadReviewRows").onclick = event => {
   if (committing || cancelling) return;
   const row = event.target.closest('[data-upload-doc-id]'); if (!row) return;
   if (event.target.closest('[data-show-upload-password]')) { const field = row.querySelector('[data-upload-field="password"]'); field.type = field.type === "password" ? "text" : "password"; event.target.textContent = field.type === "password" ? "显示" : "隐藏"; }
   if (event.target.closest('[data-apply-upload-policy]')) {
     for (const other of document.querySelectorAll('[data-upload-doc-id]')) {
-      for (const key of ['visibility','password']) other.querySelector(`[data-upload-field="${key}"]`).value = row.querySelector(`[data-upload-field="${key}"]`).value;
+      for (const key of ['visibility','password','projectId']) other.querySelector(`[data-upload-field="${key}"]`).value = row.querySelector(`[data-upload-field="${key}"]`).value;
+      const projectSelect = other.querySelector('[data-upload-field="projectId"]');
+      projectSelect.dataset.previousProjectId = projectSelect.value;
       other.querySelector('[data-upload-field="protected"]').checked = row.querySelector('[data-upload-field="protected"]').checked;
       uploadPolicyState(other);
     }
-    toast("访问设置已应用到本批文档");
+    toast("项目和访问设置已应用到本批文档");
   }
 };
 let accessPage = null, accessBusy = false, accessEpoch = 0;
@@ -1976,6 +2161,7 @@ for (const [id, key] of [
   ["statusSelect", "status"],
   ["passwordFilter", "password"],
   ["sortSelect", "sort"],
+  ["projectFilter", "projectId"],
 ])
   $("#" + id).onchange = (event) =>
     changeFilters({ [key]: event.target.value });
@@ -2007,6 +2193,7 @@ document.querySelectorAll("[data-nav-type]").forEach((link) =>
       status: "all",
       directory: "",
       directoryEmpty: false,
+      projectId: "",
     });
   }),
 );
@@ -2233,6 +2420,21 @@ $("#navigationItems").onchange = event => {
   markSettingsDirty();
 };
 $("#settingsForm").onsubmit = saveSettings;
+$("#addProject").onclick = () => openProjectName();
+$("#projectList").onclick = event => {
+  const button = event.target.closest("[data-project-action]");
+  if (!button || button.disabled || !metadataReady) return;
+  $("#projectListError").hidden = true;
+  if (button.dataset.projectAction === "delete") return deleteProject(button);
+  openProjectName(projects.find(project => project.id === button.dataset.id));
+};
+$("#projectNameForm").onsubmit = saveProjectName;
+for (const id of ["closeProjectName", "cancelProjectName"]) $("#" + id).onclick = closeProjectName;
+wireDialog($("#projectNameDialog"), closeProjectName, () => projectDraft?.saving);
+$("#pageProjectForm").onsubmit = savePageProject;
+$("#pageProjectSelect").onchange = event => handleNewProjectOption(event.target);
+for (const id of ["closePageProject", "cancelPageProject"]) $("#" + id).onclick = closePageProject;
+wireDialog($("#pageProjectDialog"), closePageProject, () => pageProjectDraft?.saving);
 $(".settings-tabs").onclick = (event) => {
   const tab = event.target.closest('[role="tab"]');
   if (tab) selectSettingsTab(tab.getAttribute("aria-controls"), { historyMode: "push" });

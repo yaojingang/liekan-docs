@@ -117,7 +117,7 @@ async function appHarness(fetchImpl, pathname = "/admin", timers = {}) {
   source = source.slice(0, source.lastIndexOf("(async () => {"));
   vm.runInContext(
     source +
-      "\nglobalThis.testApp={openEditor,saveHtmlEditor,closeHtmlEditor,htmlEditorDirty,openAccess,saveAccess,closeAccess,uploadReviewDocuments,startAuthenticated,loadList,showLogin,api,saveSettings,queryString,clearFilters,openPreview,renderVersions,restoreVersion,hidePreview,mutatePage,cancelUpload,confirmUpload,renderUploadReview,uploadWithProgress,addSamples,addWatchDir,reloadWatchDirs,setUpload(value){stagedUpload=value;},getUpload(){return stagedUpload;},setPages(value){pages=value;},setSession(value){session=value;},setPreview(page){previewPage=page;},setFilters(value){filters={...filters,...value};}};",
+      "\nglobalThis.testApp={openProjectName,closeProjectName,saveProjectName,openPageProject,closePageProject,savePageProject,openEditor,saveHtmlEditor,closeHtmlEditor,htmlEditorDirty,openAccess,saveAccess,closeAccess,uploadReviewDocuments,startAuthenticated,loadList,showLogin,api,saveSettings,queryString,clearFilters,openPreview,renderVersions,restoreVersion,hidePreview,mutatePage,cancelUpload,confirmUpload,renderUploadReview,uploadWithProgress,addSamples,addWatchDir,reloadWatchDirs,setUpload(value){stagedUpload=value;},getUpload(){return stagedUpload;},setPages(value){pages=value;},setSession(value){session=value;},setPreview(page){previewPage=page;},setFilters(value){filters={...filters,...value};}};",
     context,
   );
   return {
@@ -1263,10 +1263,174 @@ function activeSettingsPanel(document) {
   return [...document.querySelectorAll('[role="tabpanel"]')].filter(el => !el.hidden).map(el => el.id);
 }
 
+test("admin project filters survive URLs and other filters, and clear with the list", async () => {
+  const requests = [], project = { id: "project-a", name: "客户项目", documentCount: 1 };
+  const { document, app, location } = await appHarness(async (url) => {
+    requests.push(url);
+    if (url.endsWith("/api/settings")) return response({ settings: {}, projects: [project] });
+    if (url.endsWith("/api/watch-dirs")) return response({ watchDirs: [] });
+    return response({ ...listResult, facets: { directories: [], projects: [project] } });
+  }, "/admin?projectId=project-a");
+  await app.startAuthenticated();
+  assert.equal(document.querySelector("#managerView").hidden, false);
+  assert.equal(document.querySelector("#projectFilter").value, project.id);
+  assert.ok(requests.some(url => url.includes("projectId=project-a")));
+  document.querySelector("#statusSelect").value = "edited";
+  document.querySelector("#statusSelect").onchange({ target: document.querySelector("#statusSelect") });
+  await new Promise(setImmediate);
+  assert.equal(new URLSearchParams(location.search).get("projectId"), project.id);
+  app.clearFilters();
+  await new Promise(setImmediate);
+  assert.equal(new URLSearchParams(location.search).has("projectId"), false);
+});
+
+test("upload project choices apply to the batch and survive cancelling project creation", async () => {
+  const project = { id: "project-a", name: "产品手册", documentCount: 0 };
+  const { document, app } = await appHarness(async url => {
+    if (url.endsWith("/api/settings")) return response({ settings: {}, projects: [project] });
+    if (url.endsWith("/api/watch-dirs")) return response({ watchDirs: [] });
+    return response(listResult);
+  });
+  await app.startAuthenticated();
+  const upload = { uploadId: "batch", documents: ["one", "two"].map(id => ({ id, fileName: id + ".html", title: id, fileType: "html" })) };
+  app.setUpload(upload);
+  app.renderUploadReview(upload);
+  const selectors = [...document.querySelectorAll('[data-upload-field="projectId"]')];
+  selectors[0].value = project.id;
+  document.querySelector("#uploadReviewRows").onchange({ target: selectors[0] });
+  const apply = document.querySelector("[data-apply-upload-policy]");
+  document.querySelector("#uploadReviewRows").onclick({ target: apply });
+  assert.deepEqual(Array.from(app.uploadReviewDocuments(), document => document.projectId), [project.id, project.id]);
+  selectors[1].value = "__new__";
+  document.querySelector("#uploadReviewRows").onchange({ target: selectors[1] });
+  assert.equal(document.querySelector("#projectNameDialog").open, true);
+  app.closeProjectName();
+  assert.equal(selectors[1].value, project.id);
+  assert.deepEqual(Array.from(app.uploadReviewDocuments(), document => document.projectId), [project.id, project.id]);
+});
+
+test("creating a project during upload selects it without changing other drafts", async () => {
+  const project = { id: "new-project", name: "新项目", documentCount: 0 }, requests = [];
+  const { document, app } = await appHarness(async (url, options = {}) => {
+    if (url.endsWith("/api/projects")) { requests.push(JSON.parse(options.body)); return response({ project, projects: [project] }, 201); }
+    if (url.endsWith("/api/settings")) return response({ settings: {}, projects: [] });
+    if (url.endsWith("/api/watch-dirs")) return response({ watchDirs: [] });
+    return response(listResult);
+  });
+  await app.startAuthenticated();
+  const upload = { uploadId: "batch", documents: [{ id: "one", fileName: "one.html", title: "原始标题", fileType: "html" }] };
+  app.setUpload(upload); app.renderUploadReview(upload);
+  document.querySelector('[data-upload-field="title"]').value = "保留草稿";
+  const select = document.querySelector('[data-upload-field="projectId"]');
+  select.value = "__new__";
+  document.querySelector("#uploadReviewRows").onchange({ target: select });
+  document.querySelector("#projectNameInput").value = project.name;
+  await app.saveProjectName({ preventDefault() {} });
+  assert.equal(document.querySelector("#projectNameDialog").open, false);
+  assert.equal(select.value, project.id);
+  assert.equal(app.uploadReviewDocuments()[0].title, "保留草稿");
+  assert.deepEqual(requests, [{ name: project.name }]);
+});
+
+test("an older list response cannot remove a newly created project's options", async () => {
+  const project = { id: "new-project", name: "新项目", documentCount: 0 };
+  let resolveList, delayList = false;
+  const { document, app } = await appHarness(async (url, options = {}) => {
+    if (url.endsWith("/api/projects")) return response({ project, projects: [project] }, 201);
+    if (url.endsWith("/api/settings")) return response({ settings: {}, projects: [] });
+    if (url.endsWith("/api/watch-dirs")) return response({ watchDirs: [] });
+    if (delayList) return new Promise(resolve => { resolveList = resolve; });
+    return response({ ...listResult, facets: { directories: [], projects: [] } });
+  });
+  await app.startAuthenticated();
+  delayList = true;
+  const pending = app.loadList();
+  app.openProjectName();
+  document.querySelector("#projectNameInput").value = project.name;
+  await app.saveProjectName({ preventDefault() {} });
+  assert.ok(document.querySelector(`#projectFilter option[value="${project.id}"]`));
+  resolveList(response({ ...listResult, facets: { directories: [], projects: [] } }));
+  await pending;
+  assert.ok(document.querySelector(`#projectFilter option[value="${project.id}"]`));
+  app.openPageProject({ id: "page-a", title: "文档", projectId: "" });
+  assert.ok(document.querySelector(`#pageProjectSelect option[value="${project.id}"]`));
+});
+
+test("older project snapshots cannot undo rename or deletion in settings", async () => {
+  for (const action of ["rename", "delete"]) {
+    const initial = { id: "project-a", name: "原项目", documentCount: 1 };
+    const renamed = { ...initial, name: "新项目名称" };
+    const current = action === "rename" ? [renamed] : [];
+    let resolveList, delayed = false;
+    const { document, app } = await appHarness(async (url, options = {}) => {
+      if (url.endsWith("/api/projects/project-a")) return response({ project: renamed, projects: current, defaultProject: { documentCount: action === "delete" ? 1 : 0 } });
+      if (url.endsWith("/api/settings")) return response({ settings: {}, projects: [initial] });
+      if (url.endsWith("/api/watch-dirs")) return response({ watchDirs: [] });
+      if (delayed) return new Promise(resolve => { resolveList = resolve; });
+      return response({ ...listResult, facets: { directories: [], projects: [initial] } });
+    }, "/admin/settings#projectSettings");
+    await app.startAuthenticated();
+    delayed = true;
+    const pending = app.loadList();
+    if (action === "rename") {
+      app.openProjectName(initial);
+      document.querySelector("#projectNameInput").value = renamed.name;
+      await app.saveProjectName({ preventDefault() {} });
+    } else {
+      const button = document.querySelector('[data-project-action="delete"]');
+      let focusEnabled;
+      document.querySelector("#addProject").focus = function () { focusEnabled = !this.disabled; };
+      await document.querySelector("#projectList").onclick({ target: button });
+      assert.equal(focusEnabled, true);
+    }
+    resolveList(response({ ...listResult, facets: { directories: [], projects: [initial] } }));
+    await pending;
+    const option = document.querySelector('#projectFilter option[value="project-a"]');
+    assert.equal(option?.textContent, action === "rename" ? renamed.name : undefined);
+    assert.equal(document.querySelector("#projectList").textContent.includes(initial.name), false);
+    if (action === "delete") assert.match(document.querySelector('[data-default-project]').textContent, /1 个文档/);
+  }
+});
+
+test("default project labels match settings, filters, uploads and existing document assignments", async () => {
+  const { document, app } = await appHarness(async url => {
+    if (url.endsWith("/api/settings")) return response({ settings: {}, projects: [], defaultProject: { name: "默认项目", documentCount: 3 } });
+    if (url.endsWith("/api/watch-dirs")) return response({ watchDirs: [] });
+    return response(listResult);
+  }, "/admin/settings#projectSettings");
+  await app.startAuthenticated();
+  assert.equal(document.querySelector('#projectFilter option[value="unassigned"]').textContent, "默认项目");
+  const builtin = document.querySelector('#projectList [data-default-project]');
+  assert.ok(builtin);
+  assert.match(builtin.textContent, /默认项目/);
+  assert.match(builtin.textContent, /3 个文档/);
+  assert.equal(builtin.querySelector("button"), null);
+  const upload = { documents: [{ id: "legacy", fileName: "old.html", title: "旧文档", fileType: "html" }] };
+  app.renderUploadReview(upload);
+  assert.equal(document.querySelector('[data-upload-field="projectId"] option[value=""]').textContent, "默认项目");
+  app.openPageProject({ id: "legacy", projectId: "", title: "旧文档" });
+  assert.equal(document.querySelector('#pageProjectSelect option[value=""]').textContent, "默认项目");
+});
+
+test("historical custom projects named like the default remain distinguishable", async () => {
+  const project = { id: "historical", name: "默认项目", documentCount: 2 };
+  const { document, app } = await appHarness(async url => {
+    if (url.endsWith("/api/settings")) return response({ settings: {}, projects: [project] });
+    if (url.endsWith("/api/watch-dirs")) return response({ watchDirs: [] });
+    return response({ ...listResult, facets: { directories: [], projects: [project] } });
+  }, "/admin/settings#projectSettings");
+  await app.startAuthenticated();
+  assert.equal(document.querySelector('#projectFilter option[value="unassigned"]').textContent, "默认项目");
+  assert.equal(document.querySelector('#projectFilter option[value="historical"]').textContent, "默认项目（自定义）");
+  app.openPageProject({ id: "old-page", title: "历史文档", projectId: project.id });
+  assert.equal(document.querySelector('#pageProjectSelect').value, project.id);
+  assert.equal(document.querySelector('#pageProjectSelect option[value="historical"]').textContent, "默认项目（自定义）");
+});
+
 test("settings tabs show one section, preserve drafts and save fields across all sections", async () => {
   let saved;
   const { document, window, app } = await settingsHarness({ patch(body) { saved = body; return response({ settings: { ...body, adminPath: "/admin" } }); } });
-  assert.equal(document.querySelectorAll('[role="tab"]').length, 7);
+  assert.equal(document.querySelectorAll('[role="tab"]').length, 8);
   assert.deepEqual(activeSettingsPanel(document), ["siteSettings"]);
   const name = document.querySelector("#siteNameInput");
   name.value = "Draft site";

@@ -398,6 +398,8 @@ test("serves a public document index and filters public API fields without login
       "fileType",
       "hasAccessPassword",
       "directoryName",
+      "projectId",
+      "projectName",
       "size",
       "uploadTime",
       "updatedTime",

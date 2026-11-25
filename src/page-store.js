@@ -32,6 +32,7 @@ import {
 } from "./admin-path.js";
 
 const execFileAsync = promisify(execFile);
+const defaultProjectName = "默认项目";
 
 function nowIso() {
   return new Date().toISOString();
@@ -169,6 +170,8 @@ function rowToPage(row) {
     sourceType: row.source_type,
     sourcePath: row.source_path,
     directoryName: row.directory_name || "",
+    projectId: row.project_id || "",
+    projectName: row.project_name || defaultProjectName,
     size: row.size,
     status: row.status,
     createdAt: row.created_at,
@@ -227,6 +230,8 @@ function publicPageSummary(page) {
     fileName: page.fileName,
     fileType: page.fileType,
     directoryName: page.directoryName || "",
+    projectId: page.projectId,
+    projectName: page.projectName,
     size: page.size,
     uploadTime: page.uploadTime,
     updatedTime: page.updatedTime,
@@ -412,15 +417,75 @@ export class PageStore {
     }
   }
 
+  listProjects({ publicOnly = false } = {}) {
+    return this.db.prepare(`SELECT projects.id, projects.name, COUNT(pages.id) AS documentCount
+      FROM projects LEFT JOIN pages ON pages.project_id = projects.id AND pages.deleted_at IS NULL
+        ${publicOnly ? "AND pages.visibility = 'public' AND pages.homepage_listed = 1 AND pages.status IN ('published', 'edited')" : ""}
+      GROUP BY projects.id ${publicOnly ? "HAVING COUNT(pages.id) > 0" : ""}
+      ORDER BY projects.created_at, projects.id`).all().map(row => ({ ...row }));
+  }
+
+  projectSummary() {
+    return {
+      projects: this.listProjects(),
+      defaultProject: {
+        id: "",
+        name: defaultProjectName,
+        documentCount: this.db.prepare("SELECT COUNT(*) AS count FROM pages WHERE project_id IS NULL AND deleted_at IS NULL").get().count,
+      },
+    };
+  }
+
+  saveProject(id, name) {
+    const fail = (message, statusCode = 400) => {
+      throw Object.assign(new Error(message), { code: "PROJECT_INVALID", statusCode });
+    };
+    if (typeof name !== "string" || !name.trim() || [...name.trim()].length > 60 || /[\u0000-\u001f\u007f]/.test(name))
+      fail("项目名称需填写 1 至 60 个字符");
+    name = name.trim().normalize("NFC");
+    if (name === defaultProjectName) fail("默认项目为系统内置项目，请使用其他名称", 409);
+    const key = name.toLocaleLowerCase("en-US");
+    if (id && !this.db.prepare("SELECT id FROM projects WHERE id = ?").get(id)) fail("项目不存在，请刷新后重试", 404);
+    const existing = this.db.prepare("SELECT id FROM projects WHERE name_key = ?").get(key);
+    if (existing && existing.id !== id) fail("项目名称已存在，请使用其他名称", 409);
+    if (id) this.db.prepare("UPDATE projects SET name = ?, name_key = ? WHERE id = ?").run(name, key, id);
+    else {
+      id = crypto.randomUUID();
+      this.db.prepare("INSERT INTO projects (id, name, name_key, created_at) VALUES (?, ?, ?, ?)").run(id, name, key, nowIso());
+    }
+    return this.listProjects().find(project => project.id === id);
+  }
+
+  deleteProject(id) {
+    return this.db.prepare("DELETE FROM projects WHERE id = ?").run(id).changes > 0;
+  }
+
+  resolveProjectId(value) {
+    if (value === undefined || value === null || value === "") return null;
+    if (typeof value !== "string" || !this.db.prepare("SELECT id FROM projects WHERE id = ?").get(value))
+      throw Object.assign(new Error("项目不存在，请重新选择项目"), { code: "PROJECT_INVALID", statusCode: 400 });
+    return value;
+  }
+
+  async updatePageProject(id, projectId) {
+    return this.withPageWrite(id, async () => {
+      const page = this.getPage(id);
+      if (!page || page.deletedAt) return null;
+      this.db.prepare("UPDATE pages SET project_id = ? WHERE id = ?").run(this.resolveProjectId(projectId), id);
+      return this.getPage(id);
+    });
+  }
+
   listPages(filters = {}) {
     const rows = this.db
-      .prepare("SELECT * FROM pages ORDER BY updated_at DESC")
+      .prepare("SELECT pages.*, (SELECT name FROM projects WHERE projects.id = pages.project_id) AS project_name FROM pages ORDER BY updated_at DESC")
       .all();
     const q = String(filters.q || "")
       .trim()
       .toLowerCase();
     const status = String(filters.status || "all");
     const directory = String(filters.directory || "");
+    const projectId = String(filters.projectId || "");
     const requestedType = String(filters.type || filters.fileType || "all")
       .trim()
       .toLowerCase();
@@ -462,6 +527,7 @@ export class PageStore {
         (!filters.accessMode || filters.accessMode === "all" || (filters.accessMode === "private" ? page.visibility === "private" : page.visibility === "public" && page.homepageListed === (filters.accessMode === "listed"))) &&
         (!filters.password || filters.password === "all" || page.hasAccessPassword === (filters.password === "yes")) &&
         matchesDirectory &&
+        (!projectId || (projectId === "unassigned" ? !page.projectId : page.projectId === projectId)) &&
         (!q || haystack.includes(q))
       );
     });
@@ -598,7 +664,7 @@ export class PageStore {
           other: totals.all_count - totals.html_count - totals.pdf_count - totals.word_count,
         },
       },
-      facets: { directories },
+      facets: { directories, ...this.projectSummary() },
     };
   }
 
@@ -648,6 +714,7 @@ export class PageStore {
         .slice(offset, offset + pageSize)
         .map(publicPageSummary),
       stats: this.publicPageStats(),
+      projects: this.listProjects({ publicOnly: true }),
       pagination: {
         page,
         pageSize,
@@ -662,20 +729,20 @@ export class PageStore {
 
   getPage(id) {
     return rowToPage(
-      this.db.prepare("SELECT * FROM pages WHERE id = ?").get(id),
+      this.db.prepare("SELECT pages.*, (SELECT name FROM projects WHERE projects.id = pages.project_id) AS project_name FROM pages WHERE id = ?").get(id),
     );
   }
 
   getPageBySlug(slug) {
     return rowToPage(
-      this.db.prepare("SELECT * FROM pages WHERE slug = ?").get(slug),
+      this.db.prepare("SELECT pages.*, (SELECT name FROM projects WHERE projects.id = pages.project_id) AS project_name FROM pages WHERE slug = ?").get(slug),
     );
   }
 
   getActivePageBySlug(slug) {
     return rowToPage(
       this.db
-        .prepare("SELECT * FROM pages WHERE slug = ? AND deleted_at IS NULL")
+        .prepare("SELECT pages.*, (SELECT name FROM projects WHERE projects.id = pages.project_id) AS project_name FROM pages WHERE slug = ? AND deleted_at IS NULL")
         .get(slug),
     );
   }
@@ -749,9 +816,10 @@ export class PageStore {
     buffer,
     relativePath = "",
     visibility = "public",
+    projectId = "",
   }) {
     const [page] = await this.importUploadFiles([
-      { fileName, buffer, relativePath, visibility },
+      { fileName, buffer, relativePath, visibility, projectId },
     ]);
     return page;
   }
@@ -791,6 +859,7 @@ export class PageStore {
           file.fileName || "file",
         );
         return {
+          projectId: file.projectId,
           fileName:
             path.posix.basename(relativePath) ||
             path.basename(file.fileName || "file"),
@@ -820,6 +889,8 @@ export class PageStore {
       };
     }
 
+    for (const file of managedFiles) file.projectId = this.resolveProjectId(file.projectId);
+
     const uploadId = crypto.randomUUID();
     const uploadRoot = this.stagedUploadDir(uploadId);
     await fs.mkdir(uploadRoot, { recursive: true });
@@ -842,6 +913,8 @@ export class PageStore {
         title,
         fileType,
         visibility: "public",
+        projectId: file.projectId || "",
+        projectName: this.db.prepare("SELECT name FROM projects WHERE id = ?").get(file.projectId)?.name || defaultProjectName,
         directoryName: parentDirectoryNameFromRelative(file.relativePath),
         size: file.buffer.length,
       };
@@ -906,6 +979,7 @@ export class PageStore {
         title,
         fileName,
         visibility,
+        projectId: Object.hasOwn(edit, "projectId") ? edit.projectId : document.projectId || "",
         homepageListed: edit.homepageListed ?? true,
         passwordAction: edit.passwordAction ?? "keep",
         password: edit.password,
@@ -960,6 +1034,7 @@ export class PageStore {
     );
     if (!managedFiles.length) return [];
 
+    for (const file of managedFiles) file.projectId = this.resolveProjectId(file.projectId);
     for (const file of managedFiles) file.accessPolicy = await this.access.policy(file);
     const uploadRootId = crypto.randomUUID();
     const uploadRoot = path.join(this.config.uploadsDir, uploadRootId);
@@ -996,6 +1071,7 @@ export class PageStore {
             title: file.title,
             visibility: file.visibility,
             accessPolicy: file.accessPolicy,
+            projectId: file.projectId,
             resources: file.resources,
             sourceType: "upload",
             sourcePath,
@@ -1014,6 +1090,7 @@ export class PageStore {
           fileName: file.fileName,
           title: file.title,
           visibility: file.visibility,
+          projectId: file.projectId,
             accessPolicy: file.accessPolicy,
             resources: file.resources,
           buffer: file.buffer,
@@ -1025,7 +1102,7 @@ export class PageStore {
         }),
       );
     }
-    return created;
+    return created.map(page => this.getPage(page.id));
   }
 
   async addSamplePages() {
@@ -1076,6 +1153,7 @@ export class PageStore {
     directoryName,
     rawMtimeMs,
     visibility = "public",
+    projectId = "",
     accessPolicy, resources,
     assetBaseUrl: pageAssetBaseUrl = "",
   }) {
@@ -1102,6 +1180,7 @@ export class PageStore {
       sourceType,
       sourcePath,
       directoryName,
+      projectId,
       size: Buffer.byteLength(generatedContent),
       status: "published",
       createdAt,
@@ -1132,6 +1211,7 @@ export class PageStore {
     rawMtimeMs,
     fileType,
     visibility = "public",
+    projectId = "",
     accessPolicy, resources,
   }) {
     const createdAt = nowIso();
@@ -1158,6 +1238,7 @@ export class PageStore {
       sourceType,
       sourcePath,
       directoryName,
+      projectId,
       size: Buffer.byteLength(buffer),
       status: "published",
       createdAt,
@@ -1221,8 +1302,8 @@ export class PageStore {
       .prepare(
         `INSERT INTO pages (
           id, slug, file_name, title, source_type, source_path, directory_name, size, status,
-          created_at, updated_at, revision, generated_path, file_type, mime_type, raw_mtime_ms, checksum, edited, access_count, visibility, homepage_listed, access_password_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          created_at, updated_at, revision, generated_path, file_type, mime_type, raw_mtime_ms, checksum, edited, access_count, visibility, homepage_listed, access_password_hash, project_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT id FROM projects WHERE id = ?))`,
       )
       .run(
         info.id,
@@ -1247,6 +1328,8 @@ export class PageStore {
         normalizeVisibility(info.visibility),
         Number(info.homepageListed ?? true),
         info.accessPasswordHash || "",
+        // Projects deleted while a document converts leave it unassigned.
+        info.projectId || null,
       );
   }
 
@@ -1658,7 +1741,7 @@ export class PageStore {
     const nextChecksum = checksum(content);
     const existingRow = this.db
       .prepare(
-        "SELECT * FROM pages WHERE source_path = ? ORDER BY deleted_at IS NULL DESC LIMIT 1",
+        "SELECT pages.*, (SELECT name FROM projects WHERE projects.id = pages.project_id) AS project_name FROM pages WHERE source_path = ? ORDER BY deleted_at IS NULL DESC LIMIT 1",
       )
       .get(absolutePath);
     if (existingRow?.deleted_at) return rowToPage(existingRow);
@@ -1715,7 +1798,7 @@ export class PageStore {
     const absolutePath = path.resolve(filePath);
     const row = this.db
       .prepare(
-        "SELECT * FROM pages WHERE source_path = ? ORDER BY deleted_at IS NULL DESC LIMIT 1",
+        "SELECT pages.*, (SELECT name FROM projects WHERE projects.id = pages.project_id) AS project_name FROM pages WHERE source_path = ? ORDER BY deleted_at IS NULL DESC LIMIT 1",
       )
       .get(absolutePath);
     if (!row) return null;
