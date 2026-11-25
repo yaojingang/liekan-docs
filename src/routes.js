@@ -22,7 +22,12 @@ function publicPage(page) {
 async function collectUploadParts(request) {
   const files = [];
   const relativePaths = [];
+  let projectId = "";
   for await (const part of request.parts()) {
+    if (part.type === "field" && part.fieldname === "projectId") {
+      projectId = String(part.value || "");
+      continue;
+    }
     if (part.type === "field" && part.fieldname === "relativePath") {
       relativePaths.push(String(part.value || ""));
       continue;
@@ -36,7 +41,7 @@ async function collectUploadParts(request) {
       relativePath,
     });
   }
-  return files;
+  return files.map(file => ({ ...file, projectId }));
 }
 
 const sessionCookieName = "tokdoc_session";
@@ -477,7 +482,7 @@ function registerApiRoutes(app, prefix = "") {
           request.body || {},
         );
       } catch (error) {
-        if (error.code === "DOCUMENT_ACCESS") return reply.code(error.statusCode).send({ error: error.message });
+        if (["DOCUMENT_ACCESS", "PROJECT_INVALID"].includes(error.code)) return reply.code(error.statusCode).send({ error: error.message });
         if (error.message === "Upload batch not found")
           return reply.code(404).send({ error: error.message });
         if (error.code === "WORD_CONVERSION_FAILED")
@@ -501,6 +506,7 @@ function registerApiRoutes(app, prefix = "") {
 
   app.get(`${prefix}/api/settings`, async () => ({
     settings: app.store.getSettings(),
+    ...app.store.projectSummary(),
     runtime: {
       generatedDir: app.config.generatedDir,
       watchMode: "events",
@@ -509,6 +515,45 @@ function registerApiRoutes(app, prefix = "") {
       configuredSourceWriteDefault: Boolean(app.config.allowSourceWrite),
     },
   }));
+
+  app.get(`${prefix}/api/projects`, async () => app.store.projectSummary());
+
+  app.post(`${prefix}/api/projects`, async (request, reply) => {
+    try {
+      const project = app.store.saveProject(null, request.body?.name);
+      return reply.code(201).send({ project, ...app.store.projectSummary() });
+    } catch (error) {
+      if (error.code === "PROJECT_INVALID") return reply.code(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  app.patch(`${prefix}/api/projects/:id`, async (request, reply) => {
+    try {
+      const project = app.store.saveProject(request.params.id, request.body?.name);
+      return { project, ...app.store.projectSummary() };
+    } catch (error) {
+      if (error.code === "PROJECT_INVALID") return reply.code(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  app.delete(`${prefix}/api/projects/:id`, async (request, reply) => {
+    if (!app.store.deleteProject(request.params.id)) return sendNotFound(reply, "项目不存在");
+    return app.store.projectSummary();
+  });
+
+  app.patch(`${prefix}/api/pages/:id/project`, { schema: { body: {
+    type: "object", required: ["projectId"], properties: { projectId: { type: ["string", "null"] } },
+  } } }, async (request, reply) => {
+    try {
+      const page = await app.store.updatePageProject(request.params.id, request.body.projectId);
+      return page ? { page: publicPage(page) } : sendNotFound(reply, "文档不存在或已移入回收站");
+    } catch (error) {
+      if (error.code === "PROJECT_INVALID") return reply.code(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+  });
 
   app.patch(`${prefix}/api/settings`, { schema: { body: {
     type: "object",

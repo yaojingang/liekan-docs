@@ -9,6 +9,13 @@ export function createDb(config) {
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      name_key TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS pages (
       id TEXT PRIMARY KEY,
       slug TEXT NOT NULL UNIQUE,
@@ -69,6 +76,10 @@ export function createDb(config) {
     );
   `);
   const pageColumns = db.prepare('PRAGMA table_info(pages)').all().map((column) => column.name);
+  if (!pageColumns.includes('project_id')) {
+    db.exec('ALTER TABLE pages ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL;');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_pages_project_id ON pages(project_id);');
   if (!pageColumns.includes('access_count')) {
     db.exec('ALTER TABLE pages ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0;');
   }

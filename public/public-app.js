@@ -16,6 +16,7 @@ const labels = {
 const state = {
   ...readUrl(),
   pages: [],
+  projects: [],
   stats: null,
   pagination: null,
   phase: "loading",
@@ -29,9 +30,10 @@ function readUrl(url = location) {
   const match = url.pathname.match(/^\/type\/(html|pdf|word)\/?$/i);
   const page = Number(params.get("page"));
   return {
-    view: match || params.get("view") === "resources" || ["q", "sort", "page"].some(key => params.has(key)) ? "resources" : "home",
+    view: match || params.get("view") === "resources" || ["q", "sort", "page", "projectId"].some(key => params.has(key)) ? "resources" : "home",
     type: match ? match[1].toLowerCase() : "all",
     q: (params.get("q") || "").trim(),
+    projectId: params.get("projectId") || "",
     sort:
       params.get("sort") === "created_desc" ? "created_desc" : "updated_desc",
     page: Number.isFinite(page) ? Math.max(1, Math.trunc(page)) : 1,
@@ -41,6 +43,7 @@ function urlFor(value) {
   if (value.view === "home") return "/";
   const params = new URLSearchParams();
   if (value.q) params.set("q", value.q);
+  if (value.projectId) params.set("projectId", value.projectId);
   if (value.sort !== "updated_desc") params.set("sort", value.sort);
   if (value.page > 1) params.set("page", String(value.page));
   const path = value.type === "all" ? "/" : `/type/${value.type}`;
@@ -111,6 +114,9 @@ function renderNavigation() {
     else link.removeAttribute("aria-current");
   });
 }
+function projectLabel(project) {
+  return project.id && project.name === "默认项目" ? "默认项目（自定义）" : project.name;
+}
 function renderControls() {
   const home = state.view === "home";
   $("#homeHero").hidden = !home;
@@ -125,12 +131,21 @@ function renderControls() {
   $("#publicListHint").hidden = home;
   $("#publicListHint").textContent = "每页 10 条 · 点击文档行打开";
   $("#sortSelect").value = state.sort;
+  const projectFilter = $("#projectFilter");
+  projectFilter.innerHTML = '<option value="">所有项目</option><option value="unassigned">默认项目</option>' + state.projects.map(project => `<option value="${esc(project.id)}">${esc(projectLabel(project))}</option>`).join("");
+  if (state.projectId && ![...projectFilter.options].some(option => option.value === state.projectId)) {
+    const option = document.createElement("option");
+    option.value = state.projectId;
+    option.textContent = "项目暂无公开文档";
+    projectFilter.append(option);
+  }
+  projectFilter.value = state.projectId;
   $("#publicListTitle").textContent = home ? "最近更新" : labels[state.type];
   renderNavigation();
 }
 function renderEmpty() {
   const emptyLibrary = state.stats.all === 0;
-  const emptyCategory = !emptyLibrary && !state.q && state.type !== "all";
+  const emptyCategory = !emptyLibrary && !state.q && !state.projectId && state.type !== "all";
   const title = emptyLibrary
     ? "暂无公开资源"
     : emptyCategory
@@ -140,7 +155,7 @@ function renderEmpty() {
     ? "发布后的公开资源会显示在这里。"
     : emptyCategory
       ? "可以查看其他类型的公开资源。"
-      : "调整关键词或资源类型后再试。";
+      : "调整关键词、项目或资源类型后再试。";
   $("#emptyState").innerHTML =
     `<div class="empty-icon">${icon("document")}</div><h3>${title}</h3><p>${message}</p>${emptyLibrary ? "" : emptyCategory ? '<button class="btn" data-all>查看全部资源</button>' : '<button class="btn" data-clear>清除筛选</button>'}`;
   $("#emptyState").hidden = false;
@@ -207,6 +222,7 @@ async function load(push = false) {
   const params = new URLSearchParams({
     type: state.type,
     q: state.q,
+    projectId: state.projectId,
     sort: state.sort,
     page: String(state.page),
     pageSize: state.view === "home" ? "6" : "10",
@@ -219,6 +235,7 @@ async function load(push = false) {
     if (!response.ok) throw new Error(data.error || "资源列表暂不可用");
     if (current !== serial) return;
     state.pages = data.pages;
+    state.projects = data.projects || [];
     state.stats = data.stats;
     state.pagination = data.pagination;
     state.page = data.pagination.page;
@@ -259,7 +276,7 @@ async function load(push = false) {
 function clear() {
   cancelSearch();
   $("#searchInput").value = "";
-  Object.assign(state, { view: "resources", q: "", type: "all", sort: "updated_desc", page: 1 });
+  Object.assign(state, { view: "resources", q: "", projectId: "", type: "all", sort: "updated_desc", page: 1 });
   return load(true);
 }
 function selectCategory(type) {
@@ -345,7 +362,7 @@ $("#publicHomeLink").onclick = (event) => {
   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
   event.preventDefault();
   cancelSearch();
-  Object.assign(state, { view: "home", type: "all", q: "", sort: "updated_desc", page: 1 });
+  Object.assign(state, { view: "home", type: "all", q: "", projectId: "", sort: "updated_desc", page: 1 });
   $("#homeSearchInput").value = "";
   $("#searchInput").value = "";
   $("#mainContent").scrollTop = 0;
@@ -362,7 +379,7 @@ $("#homeSearchInput").oninput = renderNavigation;
 $("#homeSearch").onsubmit = (event) => {
   event.preventDefault();
   cancelSearch();
-  Object.assign(state, { view: "resources", type: "all", q: $("#homeSearchInput").value.trim(), sort: "updated_desc", page: 1 });
+  Object.assign(state, { view: "resources", type: "all", q: $("#homeSearchInput").value.trim(), projectId: "", sort: "updated_desc", page: 1 });
   $("#searchInput").value = state.q;
   $("#mainContent").scrollTop = 0;
   return load(true);
@@ -381,6 +398,11 @@ $("#searchInput").oninput = () => {
 $("#sortSelect").onchange = (event) => {
   cancelSearch();
   Object.assign(state, { q: searchValue(), sort: event.target.value, page: 1 });
+  return load(true);
+};
+$("#projectFilter").onchange = event => {
+  cancelSearch();
+  Object.assign(state, { q: searchValue(), projectId: event.target.value, page: 1 });
   return load(true);
 };
 $("#clearFilters").onclick = clear;

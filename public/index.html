@@ -6,7 +6,7 @@
     <title>猎看文档系统</title>
     <link rel="stylesheet" href="/assets/styles/tokens.css?v=20261025-brand1" />
     <link rel="stylesheet" href="/assets/styles/components.css?v=20261009" />
-    <link rel="stylesheet" href="/assets/styles/admin.css?v=20261104-replace" />
+    <link rel="stylesheet" href="/assets/styles/admin.css?v=20261123-project2" />
   </head>
   <body class="lkdoc admin-page" data-auth="loading">
     <div class="boot-screen" id="bootScreen" role="status">正在加载工作台…</div>
@@ -258,6 +258,8 @@
                 <option value="edited">已编辑</option></select
               ><select id="directorySelect" aria-label="文档目录">
                 <option value="all">全部目录</option></select
+              ><select id="projectFilter" aria-label="按项目筛选">
+                <option value="">所有项目</option><option value="unassigned">默认项目</option></select
               ><select id="visibilitySelect" aria-label="文档访问方式">
                 <option value="all">全部访问方式</option>
                 <option value="listed">公开 · 首页可见</option>
@@ -269,7 +271,7 @@
                 <option value="updated_desc">最近更新</option>
                 <option value="created_desc">最近入库</option>
                 <option value="access_desc">访问次数</option></select
-              ><button class="btn ghost" id="clearFilters" type="button">
+              ><span class="filter-actions"><button class="btn ghost" id="clearFilters" type="button">
                 清除筛选</button
               ><button
                 class="btn icon-btn"
@@ -279,7 +281,7 @@
                 title="刷新列表"
               >
                 <span data-icon="refresh"></span>
-              </button>
+              </button></span>
             </div>
             <div
               id="listLoading"
@@ -320,6 +322,7 @@
             <div class="settings-tabs" role="tablist" aria-label="设置分组">
               <button type="button" role="tab" id="siteSettingsTab" aria-controls="siteSettings" aria-selected="true" tabindex="0">站点信息与 SEO</button>
               <button type="button" role="tab" id="navigationSettingsTab" aria-controls="navigationSettings" aria-selected="false" tabindex="-1">前台导航</button>
+              <button type="button" role="tab" id="projectSettingsTab" aria-controls="projectSettings" aria-selected="false" tabindex="-1">项目</button>
               <button type="button" role="tab" id="directorySettingsTab" aria-controls="directorySettings" aria-selected="false" tabindex="-1">目录监听</button>
               <button type="button" role="tab" id="editSettingsTab" aria-controls="editSettings" aria-selected="false" tabindex="-1">编辑与版本</button>
               <button type="button" role="tab" id="trackingSettingsTab" aria-controls="trackingSettings" aria-selected="false" tabindex="-1">统计代码</button>
@@ -328,6 +331,12 @@
             </div>
           </div>
           <form class="settings-sections" id="settingsForm" novalidate>
+              <section class="panel settings-section" id="projectSettings" role="tabpanel" aria-labelledby="projectSettingsTab" tabindex="-1" hidden>
+                <div class="project-settings-heading"><h2>项目</h2><button type="button" class="btn" id="addProject">新建项目</button></div>
+                <p class="hint">项目变更立即生效。删除项目后，文档保留并归入默认项目。</p>
+                <div id="projectList" class="project-list"></div>
+                <p class="field-error" id="projectListError" role="alert" hidden></p>
+              </section>
               <section
                 class="panel settings-section"
                 id="siteSettings"
@@ -863,6 +872,20 @@
         <div class="dialog-footer"><span class="hint">访问密码与管理员登录密码独立。</span><button class="btn" id="cancelAccess" type="button">取消</button><button class="btn primary" id="saveAccess" type="submit">保存设置</button></div>
       </form>
     </dialog>
+    <dialog class="dialog access-settings-dialog" id="projectNameDialog" aria-labelledby="projectNameTitle">
+      <div class="dialog-header"><h2 id="projectNameTitle">新建项目</h2><button type="button" class="btn icon-btn" id="closeProjectName" aria-label="关闭项目窗口"><span data-icon="close"></span></button></div>
+      <form id="projectNameForm">
+        <div class="dialog-body"><label class="field"><span>项目名称</span><input id="projectNameInput" required maxlength="60" autocomplete="off" /></label><p class="field-error" id="projectNameError" role="alert" hidden></p></div>
+        <div class="dialog-footer"><button class="btn" type="button" id="cancelProjectName">取消</button><button class="btn primary" type="submit" id="saveProjectName">保存项目</button></div>
+      </form>
+    </dialog>
+    <dialog class="dialog access-settings-dialog" id="pageProjectDialog" aria-labelledby="pageProjectTitle">
+      <div class="dialog-header"><div><h2 id="pageProjectTitle">设置项目</h2><p class="hint" id="pageProjectName"></p></div><button type="button" class="btn icon-btn" id="closePageProject" aria-label="关闭项目设置"><span data-icon="close"></span></button></div>
+      <form id="pageProjectForm">
+        <div class="dialog-body"><label class="field"><span>项目</span><select id="pageProjectSelect"></select></label><p class="field-error" id="pageProjectError" role="alert" hidden></p></div>
+        <div class="dialog-footer"><button class="btn" type="button" id="cancelPageProject">取消</button><button class="btn primary" type="submit" id="savePageProject">保存设置</button></div>
+      </form>
+    </dialog>
     <dialog
       class="dialog history-dialog"
       id="historyDialog"
@@ -896,6 +919,6 @@
       </div>
     </dialog>
     <div class="toast" id="toast" role="status" hidden></div>
-    <script type="module" src="/assets/app.js?v=20261109-upload50"></script>
+    <script type="module" src="/assets/app.js?v=20261123-project2"></script>
   </body>
 </html>

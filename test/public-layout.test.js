@@ -199,6 +199,29 @@ async function harness(fetchImpl = async () => response(result()), url = "/?view
   };
 }
 
+test("public project filtering preserves search and category, resets paging, and clears with all documents", async () => {
+  const project = { id: "project-a", name: "公开项目", documentCount: 1 };
+  const h = await harness(async () => response({ ...result([resource()]), projects: [project] }), "/type/html?projectId=project-a&q=指南&page=2");
+  await flush();
+  const select = h.document.querySelector("#projectFilter");
+  assert.equal(select.querySelector('option[value="unassigned"]').textContent, "默认项目");
+  assert.equal(select.value, project.id);
+  assert.ok(h.calls.at(-1).includes("projectId=project-a"));
+  select.value = "unassigned";
+  await select.onchange({ target: select });
+  const query = new URL(h.calls.at(-1), "http://test").searchParams;
+  assert.equal(query.get("projectId"), "unassigned");
+  assert.equal(query.get("type"), "html");
+  assert.equal(query.get("q"), "指南");
+  assert.equal(query.get("page"), "1");
+  await h.navigate("/?view=resources&projectId=project-a");
+  assert.equal(select.value, project.id);
+  h.click("#allDocumentsLink");
+  await flush();
+  assert.equal(select.value, "");
+  assert.equal(h.location.searchParams.has("projectId"), false);
+});
+
 test("public first load selects its deep-link category without presenting unknown counts as zero", async () => {
   const pending = deferred();
   const h = await harness(
